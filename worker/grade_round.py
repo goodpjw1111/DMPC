@@ -161,30 +161,32 @@ async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
             continue
         pid = str(p["id"])
         cfg = _as_dict(p["scoring_config"])
-        lo, hi, k, eps = _challenge_config(cfg)
         subs = _challenge_subtasks(cfg)
         base = Limits(time_ms=p["time_limit_ms"], memory_mb=p["memory_limit_mb"])
         reps = await conn.fetch(REPS_SQL, p["id"], scheduled_at)
 
         if subs:
-            total_k = sum(int(st["num_seeds"]) for st in subs)
-            all_seeds = derive_seeds(secret, round_row["idem_key"], p["problem_key"], total_k, lo, hi)
-            if len(all_seeds) < total_k:
-                raise RoundConfigError(
-                    f"seed_range [{lo},{hi}] too small for {total_k} distinct subtask seeds"
-                )
-            groups, idx = [], 0
-            for st in subs:
-                n = int(st["num_seeds"])
-                groups.append({"seeds": all_seeds[idx:idx + n], "budget": int(st["budget"]),
-                               "eps": float(st.get("cost_eps", eps)), "gen_params": st.get("gen_params")})
-                idx += n
-            seeds_by_problem[pid] = all_seeds
+            # Each subtask is a fixed-feature PART (exact N/M/dust) with its own seed RANGE;
+            # ONE fresh seed is drawn per round from that range (different each eval, but
+            # reproducible). Seeds are kept distinct ACROSS parts so case_results
+            # (UNIQUE round,submission,seed) never collides on overlapping ranges.
+            used: set[int] = set()
+            groups = []
+            for i, st in enumerate(subs):
+                lo, hi = int(st.get("seed_lo", 0)), int(st.get("seed_hi", 0))
+                cands = derive_seeds(secret, round_row["idem_key"], f"{p['problem_key']}#{i}", 64, lo, hi)
+                pick = next((s for s in cands if s not in used), None)
+                if pick is None:
+                    raise RoundConfigError(f"challenge subtask {i} seed range [{lo},{hi}] exhausted (overlap)")
+                used.add(pick)
+                groups.append({"seeds": [pick], "budget": int(st["budget"]),
+                               "eps": float(st.get("cost_eps", 0.0)), "gen_params": st.get("features")})
+            seeds_by_problem[pid] = [g["seeds"][0] for g in groups]
             subtasks_by_problem[pid] = [{"seeds": g["seeds"], "budget": g["budget"], "eps": g["eps"]} for g in groups]
             for rep in reps:
                 sid = str(rep["id"])
                 for g in groups:
-                    # one compile+run per subtask (each has its own feature ranges) —
+                    # one compile+run per subtask (each has its own fixed features) —
                     # correct over efficient; a handful of subtasks per problem is fine.
                     outcomes, compiled_ok, _log = await asyncio.to_thread(
                         _grade_rep_with_retry, grade_rep, p["problem_key"],
@@ -194,6 +196,7 @@ async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
             continue
 
         # ---- legacy single-pool path ----
+        lo, hi, k, eps = _challenge_config(cfg)
         gen_params = cfg.get("gen_params")        # parametric (authored) problems
         seeds = derive_seeds(secret, round_row["idem_key"], p["problem_key"], k, lo, hi)
         if len(seeds) < k:

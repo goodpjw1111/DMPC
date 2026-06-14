@@ -85,9 +85,12 @@ class StepUpSpec(BaseModel):
 
 
 class ChallengeSubtaskSpec(BaseModel):
+    # A Challenge subtask is like a Step Up case (EXACT features + score) but its seed is a
+    # RANGE: each evaluation draws ONE fresh seed from [seed_lo, seed_hi] (1 seed per eval).
     name: str = Field(default="", max_length=60)
-    gen_params: GenParams = Field(default_factory=GenParams)   # feature RANGES for this subtask
-    num_seeds: int = Field(default=4, ge=1, le=100)
+    features: dict[str, int] = Field(default_factory=dict)     # exact features (problem-specific)
+    seed_lo: int = Field(default=0, ge=0, le=10_000_000)
+    seed_hi: int = Field(default=1_000_000, ge=0, le=10_000_000)
     budget: int = Field(ge=0, le=STEPUP_BUDGET)
 
 
@@ -142,16 +145,10 @@ def validate_create(body: CreateContestIn) -> None:
         if sum(s.budget for s in cst) != STEPUP_BUDGET:
             raise HTTPException(400, f"챌린지 서브태스크 배점 합이 정확히 {STEPUP_BUDGET:,}이어야 합니다 "
                                      f"(현재 {sum(s.budget for s in cst):,})")
-        total_k = sum(s.num_seeds for s in cst)
-        if (rng[1] - rng[0] + 1) < total_k:
-            raise HTTPException(400, f"시드 범위 [{rng[0]},{rng[1]}]에서 서브태스크 시드 총 {total_k}개를 "
-                                     "뽑을 수 없습니다 (범위를 넓히거나 시드 수를 줄이세요)")
+        _validate_features(meta, [s.features for s in cst])   # exact features within the schema
         for s in cst:
-            g = s.gen_params
-            if not (GRID_MIN <= g.hMin <= g.hMax <= GRID_MAX and GRID_MIN <= g.wMin <= g.wMax <= GRID_MAX):
-                raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 격자 범위는 {GRID_MIN}~{GRID_MAX}, 최소 ≤ 최대여야 합니다")
-            if not (0 <= g.dMin <= g.dMax) or g.dMax >= g.hMax * g.wMax:
-                raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 먼지 범위가 올바르지 않습니다 (0 ≤ 최소 ≤ 최대 < 칸 수)")
+            if not (0 <= s.seed_lo <= s.seed_hi <= 10_000_000):
+                raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 시드 범위가 올바르지 않습니다 (0 ≤ 시작 ≤ 끝 ≤ 1천만)")
     else:
         # the eval picks `round_seeds` DISTINCT seeds from [lo,hi]; if the range is too small
         # the round would fail at eval time (grade_round RoundConfigError). Reject at creation.
@@ -186,11 +183,10 @@ def problem_configs(body: CreateContestIn) -> tuple[dict, dict]:
         su = {"given_seeds": list(body.stepup.given_seeds), "stepup_budget": STEPUP_BUDGET, "gen_params": gp}
     if body.challenge.subtasks:
         ch = {
-            "seed_range": [body.challenge.seed_range[0], body.challenge.seed_range[1]],
             "cost_eps": body.challenge.cost_eps,
             "challenge_subtasks": [
-                {"name": s.name, "gen_params": s.gen_params.model_dump(),
-                 "num_seeds": s.num_seeds, "budget": s.budget}
+                {"name": s.name, "features": dict(s.features),
+                 "seed_lo": s.seed_lo, "seed_hi": s.seed_hi, "budget": s.budget}
                 for s in body.challenge.subtasks
             ],
         }
