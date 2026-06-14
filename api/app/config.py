@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Comma-separated EXACT emails allowed to log in even though they are NOT in the
     # domain above (operator exceptions). The OIDC layer skips the domain/hd gate for
     # these, but still requires a Google-verified email. Override via ALLOW_EMAILS.
-    allow_emails: str = "goodpjw1111@gmail.com"
+    allow_emails: str = "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com"
 
     # --- bootstrap admins -------------------------------------------------
     # Comma-separated emails auto-granted the 'admin' role on login (idempotent;

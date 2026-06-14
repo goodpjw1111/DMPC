@@ -24,7 +24,7 @@ services:
       - { key: COOKIE_SAMESITE,     value: lax }          # single-origin via Vercel proxy
       - { key: CSP_REPORT_ONLY,     value: "false" }
       - { key: ALLOWED_EMAIL_DOMAIN, value: dimigo.hs.kr }
-      - { key: ALLOW_EMAILS,        value: goodpjw1111@gmail.com }
+      - { key: ALLOW_EMAILS,        value: "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com" }
       - { key: ADMIN_EMAILS,        value: "goodpjw2008@dimigo.hs.kr,goodpjw1111@gmail.com" }
       # --- fill these in the dashboard (secrets / your URLs) -------------------
       - { key: DATABASE_URL,        sync: false }   # Neon connection string (?sslmode=require)
