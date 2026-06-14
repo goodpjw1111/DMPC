@@ -155,6 +155,8 @@ export type CreateContestPayload = {
 };
 export const createContest = (payload: CreateContestPayload) =>
   apiPost<{ id: string; status: string; starts_at: string; ends_at: string }>("/api/admin/contests", payload);
+export const evaluateNow = (cid: string) =>
+  apiPost<{ round_id: string; scheduled_at: string }>(`/api/admin/contests/${cid}/evaluate-now`);
 
 // ---- replays (winners' writeups / 시상) ----
 export type Replay = {

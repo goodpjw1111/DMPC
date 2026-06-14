@@ -21,7 +21,7 @@ import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, moderateReplay,
-  getRegistration, registerContest, unregisterContest, getTemplates,
+  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
 } from "@/lib/api";
@@ -786,7 +786,7 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
 type ApiMissionFull = { mission: number; seed: number; input: string; budget: number; best: number };
 
 function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup" | "challenge" }) {
-  const { showToast, refreshNotifs } = useStore();
+  const { showToast, refreshNotifs, isAdmin } = useStore();
   const isStep = kind === "stepup";
   // status comes from the fetched detail (not the passed stub) so a deep-link / just-created
   // contest gates submission correctly even when it isn't in the cached list.
@@ -899,6 +899,15 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     } catch (e: any) { showToast("제출 실패", String(e?.message ?? e)); }
     finally { busyRef.current = false; setBusy(false); }
   }
+  async function runEvalNow() {                 // admin test helper: enqueue an immediate eval round
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true);
+    try {
+      const r = await evaluateNow(c.id);
+      showToast("평가 라운드 생성됨", `GitHub Actions의 evals 워크플로를 실행하면 채점됩니다(또는 ~15분 내 자동). round #${r.round_id.slice(0, 8)}`);
+    } catch (e: any) { showToast("평가 생성 실패", String(e?.message ?? e)); }
+    finally { busyRef.current = false; setBusy(false); }
+  }
 
   if (loading) return <div className="wrap"><Link href={`/c/${c.id}`} className="back">← 문제 목록</Link><ApiLoading label="문제 불러오는 중…" /></div>;
   if (loadErr) return <div className="wrap"><Link href={`/c/${c.id}`} className="back">← 문제 목록</Link><ApiErrorCard msg={loadErr} /></div>;
@@ -993,7 +1002,15 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
 
         {rightTab === "history" && isStep && <ApiStepHistory hist={stepHist} mission={mission} setMission={setMission} missions={missions} seed={curSeed} budget={curBudget} />}
         {rightTab === "history" && !isStep && <ApiChHistory hist={chHist} />}
-        {rightTab === "eval" && <ApiEval data={myEval} err={evalErr} />}
+        {rightTab === "eval" && <>
+          {isAdmin && <div className="card" style={{ marginBottom: 10, borderColor: "var(--line2)" }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span className="muted" style={{ fontSize: 12 }}>관리자: <b>지금 평가 라운드</b>를 만들어 즉시 채점(테스트). 실제 채점은 GitHub Actions <b>evals</b>가 수행합니다.</span>
+              <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={runEvalNow}>지금 평가 실행</button>
+            </div>
+          </div>}
+          <ApiEval data={myEval} err={evalErr} />
+        </>}
       </div>
     </div>
   </div>;

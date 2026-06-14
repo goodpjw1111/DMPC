@@ -261,3 +261,26 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
             )
     return {"id": str(cid), "status": status,
             "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}
+
+
+@router.post("/contests/{cid}/evaluate-now")
+async def evaluate_now(cid: str, user: CurrentUser = Depends(require_admin)):
+    """Admin TEST helper: create an immediate interim evaluation round (scheduled_at=now)
+    so the NEXT grader tick scores the current Challenge field — no waiting for 09/18 KST.
+    The actual grading runs on the grader (GitHub Actions `evals` workflow); this only
+    enqueues the round. Uses a unique 'manual:<ts>' idem_key so it never collides with the
+    scheduled 09/18 rounds and can be fired repeatedly."""
+    c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
+    if not c:
+        raise HTTPException(404, "대회를 찾을 수 없습니다")
+    if c["status"] not in ("live", "ended"):
+        raise HTTPException(400, "진행 중(live) 또는 종료(ended) 대회만 평가할 수 있습니다")
+    if not await db.fetchrow("SELECT 1 FROM problems WHERE contest_id=$1 AND kind='challenge'", cid):
+        raise HTTPException(400, "이 대회에는 챌린지 문제가 없습니다")
+    now = datetime.now(KST)
+    row = await db.fetchrow(
+        """INSERT INTO evaluation_rounds (contest_id, type, idem_key, scheduled_at, status)
+           VALUES ($1, 'interim', $2, $3, 'pending') RETURNING id""",
+        cid, f"manual:{now.isoformat()}", now,
+    )
+    return {"round_id": str(row["id"]), "scheduled_at": now.isoformat()}
