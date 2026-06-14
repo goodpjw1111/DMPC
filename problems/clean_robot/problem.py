@@ -156,3 +156,27 @@ def reference_cost(input_text: str) -> float:
         pos = nxt
         remaining.discard(nxt)
     return float(total)
+
+
+def sample_solution(input_text: str) -> str:
+    """A valid reference OUTPUT (nearest-neighbour tour — the same order reference_cost
+    scores), so the statement can show a full-marks example. Optional module contract:
+    the API surfaces this as the example output when a problem provides it."""
+    inst = parse(input_text)
+    pos = inst.start
+    remaining = set(inst.dirty)
+
+    def _walk(a: tuple[int, int], b: tuple[int, int]) -> str:
+        r, c = a
+        tr, tc = b
+        s = ("D" * (tr - r)) if tr >= r else ("U" * (r - tr))
+        s += ("R" * (tc - c)) if tc >= c else ("L" * (c - tc))
+        return s
+
+    out = []
+    while remaining:
+        nxt = min(remaining, key=lambda d: _manhattan(pos, d))
+        out.append(_walk(pos, nxt))
+        pos = nxt
+        remaining.discard(nxt)
+    return "".join(out)

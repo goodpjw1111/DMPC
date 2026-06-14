@@ -82,6 +82,7 @@ export type ApiMission = { seed: number; budget: number; best_score: number };
 export type ApiProblem = {
   id: string; kind: "stepup" | "challenge"; title: string; statement_md: string;
   time_limit_ms: number; memory_limit_mb: number; simulator_key: string | null;
+  example_input?: string | null; example_output?: string | null;
   missions?: ApiMission[];
 };
 export type StepupSubmitResult = {

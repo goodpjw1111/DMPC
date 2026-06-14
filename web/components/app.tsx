@@ -131,6 +131,47 @@ function ChallengeStatement({ md }: { md: string }) {
     </div>
   </>;
 }
+
+// Time/memory limits banner (REQ4) — reads the problem's actual limits from the API.
+function LimitsBar({ p }: { p: ApiProblem | null }) {
+  if (!p) return null;
+  const sec = p.time_limit_ms / 1000;
+  const secStr = Number.isInteger(sec) ? `${sec}초` : `${sec.toFixed(1)}초`;
+  return <div className="card" style={{ marginBottom: 12, display: "flex", gap: 18, alignItems: "center", padding: "9px 14px", flexWrap: "wrap" }}>
+    <span className="muted" style={{ fontSize: 12 }}>⏱ 시간 제한 <b style={{ color: "var(--fg)" }}>{secStr}</b></span>
+    <span className="muted" style={{ fontSize: 12 }}>💾 메모리 제한 <b style={{ color: "var(--fg)" }}>{p.memory_limit_mb}MB</b></span>
+    <span className="muted" style={{ fontSize: 11, opacity: .8 }}>(12개 언어 공통)</span>
+  </div>;
+}
+
+// Example I/O (REQ3) — auto-generated from a representative seed; input always present,
+// output shown only when the problem provides a reference solution. Both downloadable.
+function ExampleIO({ p }: { p: ApiProblem | null }) {
+  if (!p || !p.example_input) return null;
+  const trunc = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + "\n…(생략 — 다운로드로 전체 확인)" : s);
+  const pre = { background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 10, fontSize: 12, overflow: "auto", maxHeight: 240, margin: 0, whiteSpace: "pre" } as const;
+  return <div className="card" style={{ marginTop: 14 }}>
+    <h3 style={{ margin: "0 0 8px" }}>예제 입출력</h3>
+    <div className="grid2">
+      <div>
+        <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+          <span className="k muted" style={{ fontSize: 12 }}>입력 (예제)</span>
+          <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText("example_input.txt", p.example_input || "")}>⬇ 입력 다운로드</button>
+        </div>
+        <pre style={pre}>{trunc(p.example_input)}</pre>
+      </div>
+      <div>
+        <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+          <span className="k muted" style={{ fontSize: 12 }}>출력 {p.example_output ? <span className="muted">(참조 풀이 — 만점 동급)</span> : ""}</span>
+          {p.example_output ? <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText("example_output.txt", p.example_output || "")}>⬇ 출력 다운로드</button> : null}
+        </div>
+        {p.example_output
+          ? <pre style={pre}>{trunc(p.example_output)}</pre>
+          : <div className="muted" style={{ fontSize: 12, padding: 10, lineHeight: 1.6 }}>이 문제는 정답 출력이 하나로 정해지지 않습니다 — 위 입력에 대한 <b>유효한 결과</b>를 제출하면 됩니다.</div>}
+      </div>
+    </div>
+  </div>;
+}
 function MissionSelect({ mission, setMission, missions }: { mission: number; setMission: (i: number) => void; missions: Mission[] }) {
   return <select className="dd" value={mission} onChange={(e) => setMission(+e.target.value)}>
     {missions.map((m, i) => <option key={i} value={i}>미션 {m.mission}</option>)}
@@ -887,7 +928,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           ? (isStep
               ? (simReady && SimStep ? <SimStep mission={mission} setMission={setMission} onOutput={setStepOutput} missions={missions} initial={stepOutput} /> : <CustomGenNotice />)
               : (SimCh ? <SimCh /> : <CustomGenNotice />))
-          : (isStep ? (statement ? <MarkdownView md={statement} /> : <CustomGenNotice />) : <ChallengeStatement md={statement} />)}
+          : <><LimitsBar p={problem} />{isStep ? (statement ? <MarkdownView md={statement} /> : <CustomGenNotice />) : <ChallengeStatement md={statement} />}<ExampleIO p={problem} /></>}
       </div>
     </div>
     <div className="pane right">

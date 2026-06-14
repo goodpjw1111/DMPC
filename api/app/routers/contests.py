@@ -179,17 +179,33 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
     }
 
 
+def _example_io(mod, meta: dict) -> tuple[str | None, str | None]:
+    """(example_input, example_output) for the statement body, generated from a
+    representative seed (Step Up: its first given mission; otherwise a fixed seed).
+    Output is a reference solution only when the module provides sample_solution().
+    Best-effort: any generator/solver error degrades to (None, None)."""
+    try:
+        seeds = meta.get("given_seeds") or []
+        seed = seeds[0] if seeds else 0
+        inp = mod.generate(seed, meta.get("gen_params"))
+        out = mod.sample_solution(inp) if hasattr(mod, "sample_solution") else None
+        return inp, out
+    except Exception:                       # noqa: BLE001 — examples are non-critical
+        return None, None
+
+
 @router.get("/problems/{pid}")
 async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)):
     p = await _released_problem(pid)
+    mod = load_problem(p["problem_key"])
+    meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))   # authored seeds/budget/params
     base = {
         "id": str(p["id"]), "kind": p["kind"], "title": p["title"],
         "statement_md": p["statement_md"], "time_limit_ms": p["time_limit_ms"],
         "memory_limit_mb": p["memory_limit_mb"], "simulator_key": p["simulator_key"],
     }
+    base["example_input"], base["example_output"] = _example_io(mod, meta)
     if p["kind"] == "stepup":
-        mod = load_problem(p["problem_key"])
-        meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))   # authored seeds/budget
         seeds = meta.get("given_seeds") or []
         budgets = mission_budgets(meta, mission_weights(mod, meta))   # difficulty-weighted, sums to budget
         best = await db.fetch(
