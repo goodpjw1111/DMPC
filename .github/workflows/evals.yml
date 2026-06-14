@@ -28,10 +28,26 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configured?            # skip cheaply (stay green) until the secrets exist
+        id: guard
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          EVAL_SEED_SECRET: "${{ secrets.EVAL_SEED_SECRET }}"
+        run: |
+          if [ -z "${DATABASE_URL:-}" ] || [ -z "${EVAL_SEED_SECRET:-}" ]; then
+            echo "DATABASE_URL / EVAL_SEED_SECRET not set yet — skipping (docs/DEPLOY.md §12-6)"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.guard.outputs.go == 'true'
         with: { python-version: "3.12" }
 
       - name: Install isolate + toolchains
+        if: steps.guard.outputs.go == 'true'
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -40,13 +56,14 @@ jobs:
           sudo make -C /tmp/isolate install
           isolate --version
 
-      - run: pip install --no-cache-dir asyncpg
-
       - name: One scheduler tick (status flips + create + grade due rounds)
+        if: steps.guard.outputs.go == 'true'
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          EVAL_SEED_SECRET: ${{ secrets.EVAL_SEED_SECRET }}   # MUST equal the API's value
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          EVAL_SEED_SECRET: "${{ secrets.EVAL_SEED_SECRET }}"   # MUST equal the API's value
           DMPC_SCHED_ONCE: "1"
           DMPC_CALIBRATION_FACTOR: "1.5"
           ISOLATE_BOX_ID: "1"
-        run: python worker/scheduler.py
+        run: |
+          pip install --no-cache-dir asyncpg
+          python worker/scheduler.py
