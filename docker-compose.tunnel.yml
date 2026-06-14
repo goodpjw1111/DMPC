@@ -1,0 +1,23 @@
+# Self-host overlay — expose the stack via a Cloudflare Tunnel instead of opening
+# ports 80/443. NO credit card, NO cloud VM: run this on any always-on machine you
+# already have (집 PC / 학교 서버 / 라즈베리파이). Cloudflare provides the public
+# HTTPS edge; cloudflared dials OUT, so it works behind NAT/방화벽 with no port
+# forwarding. See docs/DEPLOY.md §11-B.
+#
+#   # 1) Cloudflare Zero Trust(무료) -> Networks > Tunnels -> Create a tunnel ->
+#   #    Public hostname: your host -> Service: http://caddy:80 ; copy the token.
+#   # 2) Caddy serves plain HTTP (Cloudflare terminates TLS): set DOMAIN=:80
+#   DOMAIN=:80 TUNNEL_TOKEN=eyJ... \
+#     docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --profile grader up -d --build
+#
+# api/.env URLs still use https://YOURHOST (the public Cloudflare hostname); keep
+# COOKIE_SECURE=true (browser sees HTTPS) and TRUSTED_IP_HEADER=cf-connecting-ip.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?paste the Cloudflare Zero Trust tunnel token}
+    depends_on: [caddy]

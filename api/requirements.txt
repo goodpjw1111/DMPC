@@ -1,0 +1,8 @@
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.30,<0.31
+asyncpg>=0.29,<0.31
+pydantic-settings>=2.4,<3
+httpx>=0.27,<0.28
+pyjwt[crypto]>=2.9,<3
+itsdangerous>=2.2,<3
+python-multipart>=0.0.9,<0.0.20

@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DMPC — UI 프로토타입 (NYPC 스타일)</title>
+<style>
+  :root{
+    --bg:#0c0d11; --panel:#15171e; --panel2:#1a1d25; --line:#262a33; --line2:#30343f;
+    --fg:#e8eaf0; --muted:#8b93a3; --accent:#e23b3b; --accent2:#ff5a5a;
+    --green:#3ecf8e; --robot:#4f8cff; --dirty:#f0a44a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;}
+  a{color:inherit;}
+  /* nav */
+  .nav{height:52px;display:flex;align-items:center;justify-content:space-between;
+       padding:0 18px;border-bottom:1px solid var(--line);background:#0e1015;position:sticky;top:0;z-index:5;}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.5px;cursor:pointer;}
+  .brand .mk{width:22px;height:22px;background:linear-gradient(135deg,var(--accent),#7a1f1f);border-radius:6px;
+             transform:rotate(45deg);}
+  .nav .right{display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px;}
+  .nav .right .ic{cursor:pointer;position:relative;}
+  .badge{position:absolute;top:-6px;right:-8px;background:var(--accent);color:#fff;border-radius:999px;
+         font-size:10px;padding:1px 5px;font-weight:700;}
+  .avatar{width:24px;height:24px;border-radius:50%;background:#33384a;}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 80px;}
+  .center{text-align:center;}
+  .muted{color:var(--muted);}
+  h1{font-size:24px;margin:0 0 2px;} h2{font-size:15px;letter-spacing:.3px;}
+  /* progress bar (hatched red like NYPC) */
+  .bar{height:34px;border-radius:9px;background:#22252e;overflow:hidden;position:relative;border:1px solid var(--line);}
+  .bar>.fill{height:100%;display:flex;align-items:center;justify-content:flex-end;color:#fff;font-weight:700;
+             padding-right:14px;font-size:13px;white-space:nowrap;
+             background:repeating-linear-gradient(45deg,#d23a3a 0 11px,#bf3535 11px 22px);}
+  .bar.sm{height:26px;border-radius:7px;} .bar.sm>.fill{font-size:12px;padding-right:10px;}
+  /* buttons / tabs */
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:10px 18px;font-weight:600;cursor:pointer;font-size:14px;}
+  .btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--fg);}
+  .btn.block{width:100%;}
+  .rule{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--muted);
+        text-align:center;cursor:pointer;}
+  .tabs{display:flex;gap:6px;}
+  .tab{padding:7px 16px;border-radius:8px;color:var(--muted);cursor:pointer;font-weight:600;font-size:13px;background:transparent;border:none;}
+  .tab.active{color:#fff;background:#23262f;}
+  select.dd{background:#0f1117;color:var(--fg);border:1px solid var(--line2);border-radius:8px;
+    padding:7px 28px 7px 12px;font-size:13px;cursor:pointer;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3l4 4 4-4' stroke='%238b93a3' fill='none' stroke-width='1.5'/></svg>");
+    background-repeat:no-repeat;background-position:right 10px center;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;}
+  .card h3{margin:0 0 10px;font-size:16px;}
+  .row{display:flex;align-items:center;gap:14px;}
+  .pill{font-size:12px;color:var(--muted);background:#1d2029;border:1px solid var(--line);border-radius:999px;padding:3px 10px;}
+  .status{font-size:12px;padding:3px 10px;border-radius:999px;font-weight:600;}
+  .status.live{background:#10331f;color:var(--green);} .status.ended{background:#2a2030;color:#c9a0ff;}
+  .status.soon{background:#332a14;color:#f0c44a;}
+  /* split solve layout */
+  .solve{display:flex;gap:0;height:calc(100vh - 52px);}
+  .pane{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);}
+  .pane.left{border-right:1px solid var(--line);}
+  .pane-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);}
+  .pane-body{padding:16px;overflow:auto;flex:1;}
+  .statement h2{margin-top:0;font-size:20px;} .statement p{color:#c7ccd6;line-height:1.7;}
+  .statement code{background:#1c2029;padding:1px 6px;border-radius:5px;}
+  .statement ul{color:#c7ccd6;line-height:1.7;}
+  textarea,.editor{width:100%;background:#0f1117;color:var(--fg);border:1px solid var(--line);border-radius:8px;
+            padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:13px;resize:vertical;}
+  .editor{min-height:340px;white-space:pre;overflow:auto;line-height:1.5;}
+  .submitbar{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:10px;align-items:center;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);}
+  th{color:var(--muted);font-weight:600;font-size:12px;}
+  tr.sel td{background:#241c14;}
+  .ok{color:var(--green);}
+  /* simulator */
+  .sim-grid{background:#0f1117;border:1px solid var(--line);border-radius:12px;padding:6px;}
+  .sim-hud{display:flex;gap:18px;margin:10px 2px;}
+  .sim-hud .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;}
+  .sim-hud .v{font-size:20px;font-weight:700;}
+  .keys{margin-top:10px;color:var(--muted);font-size:12px;}
+  kbd{background:#1b2030;border:1px solid var(--line2);border-radius:6px;padding:1px 7px;}
+  .io{display:flex;gap:10px;margin-top:10px;}
+  .io > div{flex:1;}
+  /* toast */
+  .toast{position:fixed;left:18px;bottom:18px;background:#16271c;border:1px solid #245236;color:#d9f5e5;
+         padding:12px 14px;border-radius:10px;max-width:320px;z-index:20;box-shadow:0 8px 30px rgba(0,0,0,.4);}
+  .toast b{color:var(--green);} .toast .x{float:right;cursor:pointer;color:var(--muted);margin-left:10px;}
+  .divider{width:10px;cursor:col-resize;background:transparent;display:flex;align-items:center;justify-content:center;color:var(--line2);}
+  .back{cursor:pointer;color:var(--muted);font-size:13px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  /* notification dropdown */
+  .notif-panel{position:fixed;top:54px;right:14px;width:320px;background:var(--panel);
+    border:1px solid var(--line2);border-radius:12px;z-index:30;box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden;}
+  .notif-head{padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700;
+    display:flex;justify-content:space-between;align-items:center;}
+  .notif-item{display:flex;gap:11px;padding:12px 14px;border-bottom:1px solid var(--line);}
+  .notif-item:last-child{border-bottom:none;}
+  .notif-ic{width:26px;height:26px;border-radius:50%;background:#1d2230;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;font-size:13px;}
+  .notif-empty{padding:20px 14px;text-align:center;color:var(--muted);}
+  /* tables in the right pane must never force horizontal overflow */
+  .pane-body table{width:100%;table-layout:auto;}
+  .pane-body td,.pane-body th{word-break:keep-all;}
+  /* narrow screens (e.g. side preview pane): stack the two panes vertically so
+     nothing clips / skews left */
+  @media (max-width: 900px){
+    .solve{flex-direction:column;height:auto;}
+    .pane.left{border-right:none;border-bottom:1px solid var(--line);}
+    .pane{min-height:240px;}
+    .pane-body{overflow:visible;}
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div class="brand" onclick="go('contests')"><div class="mk"></div> DMPC</div>
+    <div class="right">
+      <span>연습 세션</span><span class="ic">☀</span><span class="ic">▤</span><span class="ic">?</span>
+      <span class="ic" id="bell" onclick="toggleNotif(event)">🔔<span class="badge" id="notifBadge">3</span></span>
+      <span id="navNick" style="font-size:13px;color:var(--fg)"></span><div class="avatar"></div>
+    </div>
+  </div>
+  <div id="view"></div>
+  <div id="notifPanel"></div>
+  <div id="toast"></div>
+
+<script>
+// ---------------- mock data ----------------
+const CONTESTS = [
+  { id:"c1", title:"6월 모의고사 #3", status:"live", when:"2026-06-13 ~ 06-20",
+    desc:"배찌와 다오의 대청소", total:1000000, gotten:1000000, rank:2852, nextEval:"01:29:51" },
+  { id:"c2", title:"6월 모의고사 #2", status:"ended", when:"2026-06-01 ~ 06-08",
+    desc:"네코의 보물 탐사", total:1000000, gotten:842130, rank:14 },
+  { id:"c3", title:"7월 모의고사 #4", status:"soon", when:"2026-07-04 09:00 시작 ~ 07-07 09:00 종료",
+    desc:"준비 중", total:1000000, gotten:0 },
+];
+const STEP_SEEDS = [
+  { mission:1, input:"7 8\n0 0\n....*...\n......**\n...*....\n........\n**.....*\n...*.*..\n........\n", ref:23, budget:100000 },
+  { mission:2, input:"6 7\n0 0\n...*..*\n.*.....\n....*..\n*....*.\n..*....\n.....*.\n", ref:19, budget:100000 },
+  { mission:3, input:"8 6\n0 0\n..*...\n....*.\n*.....\n...*.*\n.*....\n....*.\n*...*.\n......\n", ref:22, budget:100000 },
+];
+const STEP_HISTORY = [
+  {id:9426,mission:1,at:"6월 11일 17:01",score:100000,max:100000},
+  {id:9392,mission:1,at:"6월 11일 16:22",score:94695,max:100000},
+  {id:9293,mission:2,at:"6월 11일 11:49",score:100000,max:100000},
+  {id:9255,mission:3,at:"6월 11일 11:45",score:85366,max:100000},
+];
+const CH_HISTORY = [
+  {id:10767,at:"6월 13일 14:29",cost:2142,cur:true},
+  {id:10005,at:"6월 12일 14:58",cost:2124},
+  {id:9533,at:"6월 11일 18:59",cost:2146},
+  {id:9376,at:"6월 11일 16:08",cost:2150},
+];
+const CH_EVALS = [
+  {at:"6월 13일 18:00",rank:null,note:"연습 중간평가 #10"},
+  {at:"6월 12일 18:00",rank:2852,note:"연습 중간평가 #9"},
+  {at:"6월 11일 18:00",rank:2837,note:"연습 중간평가 #8"},
+  {at:"6월 10일 18:00",rank:2812,note:"연습 중간평가 #7"},
+];
+const STATEMENT = `<h2>배찌와 다오의 대청소</h2>
+<p>배찌는 봉을 잡고 대청소를 하려고 합니다. 격자는 <code>N</code>행 <code>M</code>열이며 각 칸은 빈/먼지/블록 중 하나입니다.
+방향키로 배찌를 움직여 모든 먼지를 청소하되 <b>이동 수(=비용)를 최소화</b>하세요.</p>
+<ul>
+<li>이동: 상하좌우. 격자 밖으로 나가면 무효입니다.</li>
+<li>먼지를 밟으면 청소됩니다. 블록은 밀 수 있습니다(문제에 따라).</li>
+</ul>
+<h2 style="font-size:16px">입력 형식</h2>
+<p>첫 줄에 <code>N M</code>, 둘째 줄에 시작 좌표, 이후 <code>N</code>개의 줄에 격자가 주어집니다.</p>`;
+
+const MOVES={ArrowUp:[-1,0,'U'],ArrowDown:[1,0,'D'],ArrowLeft:[0,-1,'L'],ArrowRight:[0,1,'R']};
+const TAKEN_NICKS=["bazzi","dao","cleanking","admin"];   // demo: simulate "already taken"
+const RANKING=[
+  {rank:1,nick:"neko_master",score:998120},{rank:2,nick:"Dao_07",score:991340},
+  {rank:3,nick:"clean_god",score:980210},{rank:4,nick:"heuristic_lover",score:975500},
+  {rank:5,nick:"bazzi2",score:969870},{rank:14,nick:"me_07",score:842130,me:true},
+];
+const STATE={view:'contests',contest:null,problem:null,leftTab:'statement',rightTab:'submit',
+             mission:0,nickname:null,contestTab:'problems',evalSel:null,subSel:null};
+
+// ---------------- router ----------------
+function go(view,opts={}){Object.assign(STATE,{view},opts);if(view!=='problem')removeSimKeys();render();}
+function bar(g,t){const pct=Math.max(0,Math.min(100,100*g/t));
+  return `<div class="bar"><div class="fill" style="width:${pct}%">${g.toLocaleString()} / ${t.toLocaleString()}</div></div>`;}
+// compact bar for narrow table cells — shows only the score number (never clips)
+function cellBar(g,t){const pct=Math.max(0,Math.min(100,100*g/t));
+  return `<div class="bar sm"><div class="fill" style="width:${pct}%">${g.toLocaleString()}</div></div>`;}
+
+function render(){
+  const v=document.getElementById('view');
+  const nn=document.getElementById('navNick'); if(nn)nn.textContent=STATE.nickname||'';
+  if(!STATE.nickname){v.innerHTML=viewNickname();return;}
+  if(STATE.view==='contests')v.innerHTML=viewContests();
+  else if(STATE.view==='contest')v.innerHTML=viewContest();
+  else if(STATE.view==='problem')v.innerHTML=viewProblem(),mountProblem();
+}
+
+// ---------------- first-login: pick a nickname ----------------
+const RESERVED=["admin","administrator","root","system","dmpc","nypc"];
+function validateNick(name){
+  name=(name||"").trim();
+  if(name.length<2)return"닉네임은 2자 이상이어야 합니다.";
+  if(name.length>16)return"닉네임은 16자 이하여야 합니다.";
+  if(!/^[A-Za-z0-9_]+$/.test(name))return"영문·숫자·밑줄(_)만 사용할 수 있습니다. (한글 불가)";
+  if(name[0]==="_"||name.slice(-1)==="_")return"밑줄(_)로 시작하거나 끝날 수 없습니다.";
+  if(RESERVED.includes(name.toLowerCase()))return"사용할 수 없는 닉네임입니다.";
+  if(TAKEN_NICKS.includes(name.toLowerCase()))return"이미 사용 중인 닉네임입니다.";
+  return null;
+}
+function viewNickname(){
+  return `<div class="wrap" style="max-width:460px;margin-top:60px">
+    <h1 style="text-align:center">닉네임 설정</h1>
+    <p class="muted center" style="margin-bottom:22px">대회에서 보일 닉네임을 정하세요. 영문·숫자·밑줄, 2~16자. 중복 불가.</p>
+    <div class="card">
+      <input id="nickIn" placeholder="예: Clean_King_07" oninput="onNick()"
+        style="width:100%;background:#0f1117;color:var(--fg);border:1px solid var(--line);border-radius:9px;padding:12px;font-size:15px"/>
+      <div id="nickMsg" class="muted" style="min-height:20px;margin:8px 2px;font-size:13px"></div>
+      <button class="btn block" id="nickBtn" onclick="saveNick()" disabled>시작하기</button>
+    </div>
+  </div>`;
+}
+function onNick(){
+  const val=document.getElementById('nickIn').value;
+  const err=val?validateNick(val):"";
+  const msg=document.getElementById('nickMsg'),btn=document.getElementById('nickBtn');
+  if(!val){msg.textContent="";msg.className="muted";btn.disabled=true;return;}
+  if(err){msg.textContent="✕ "+err;msg.className="";msg.style.color="var(--accent2)";btn.disabled=true;}
+  else{msg.textContent="✓ 사용 가능한 닉네임입니다.";msg.style.color="var(--green)";btn.disabled=false;}
+}
+function saveNick(){const val=document.getElementById('nickIn').value.trim();
+  if(validateNick(val))return;STATE.nickname=val;go('contests');toast(`환영합니다, ${val} 님!`);}
+
+// ---------------- contest list (MAIN) ----------------
+function viewContests(){
+  const cards=CONTESTS.map(c=>{
+    const st={live:'진행 중',ended:'종료',soon:'예정'}[c.status];
+    const right = c.status==='soon'
+      ? `<button class="btn ghost" disabled>${c.when}</button>`
+      : `<div style="min-width:260px">${bar(c.gotten,c.total)}</div>`;
+    return `<div class="card" style="margin-bottom:14px;cursor:pointer" onclick="go('contest',{contest:'${c.id}'})">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div class="row"><h3 style="margin:0">${c.title}</h3><span class="status ${c.status}">${st}</span></div>
+          <div class="muted" style="margin-top:6px">${c.desc} · ${c.when}
+            ${c.status==='ended'?` · 최종 등수 <b style="color:#c9a0ff">${c.rank}위</b>`:''}
+            ${c.status==='live'?` · 현재 등수 <b class="ok">${c.rank}</b> · 다음 평가 ${c.nextEval}`:''}
+          </div>
+        </div>${right}
+      </div></div>`;
+  }).join('');
+  return `<div class="wrap">
+    <div class="row" style="justify-content:space-between;margin-bottom:18px">
+      <h1>모의고사 목록</h1>
+      <button class="btn ghost" title="등록하면 다음날 09:00 시작, 3일 뒤 09:00 종료(최종 테스트→등수 공개), KST" onclick="toast('등록 시 다음날 09:00 시작 · 3일 뒤 09:00 최종 테스트 종료 (KST)')">+ 새 모의고사 (관리자)</button>
+    </div>${cards}
+  </div>`;
+}
+
+// ---------------- contest detail (problem list) ----------------
+function viewContest(){
+  const c=CONTESTS.find(x=>x.id===STATE.contest);
+  const ended=c.status==='ended';
+  const tabbar=ended?`<div class="tabs" style="justify-content:center;margin:6px 0 20px">
+      <button class="tab ${STATE.contestTab!=='ranking'?'active':''}" onclick="go('contest',{contestTab:'problems'})">문제</button>
+      <button class="tab ${STATE.contestTab==='ranking'?'active':''}" onclick="go('contest',{contestTab:'ranking'})">🏆 랭킹</button>
+    </div>`:'';
+  const body=(ended&&STATE.contestTab==='ranking')?rankingHTML(c):problemListHTML(c);
+  return `<div class="wrap">
+    <div class="back" onclick="go('contests')">← 모의고사 목록</div>
+    <h2 class="center muted" style="margin:18px 0 8px">예상 총점</h2>
+    ${bar(c.gotten,c.total)}
+    <div class="rule" style="margin:14px 0 18px">📖 대회 규칙·개발 도구 사용 안내</div>
+    ${tabbar}${body}
+  </div>`;
+}
+function problemListHTML(c){
+  return `<h2 class="center" style="margin-bottom:16px">문제 목록</h2>
+    <div class="card" style="margin-bottom:14px;cursor:pointer" onclick="go('problem',{contest:'${c.id}',problem:'stepup',leftTab:'statement',rightTab:'submit'})">
+      <h3>${c.desc} — 스텝 업</h3>${bar(1000000,1000000)}
+    </div>
+    <div class="card" style="cursor:pointer" onclick="go('problem',{contest:'${c.id}',problem:'challenge',leftTab:'statement',rightTab:'submit'})">
+      <h3>${c.desc} — 챌린지</h3>
+      <div class="row muted" style="gap:18px;margin-bottom:10px;font-size:13px">
+        <span>🏅 ${c.status==='live'?'현재':'최종'} 등수 <b class="ok">${c.rank||'-'}</b></span>
+        ${c.status==='live'?`<span>⏱ 다음 중간 평가까지 <b>${c.nextEval||'-'}</b></span>`:''}
+      </div>${bar(800000,800000)}
+    </div>`;
+}
+function rankingHTML(c){
+  return `<h2 class="center" style="margin-bottom:6px">최종 랭킹</h2>
+    <p class="muted center" style="margin:0 0 16px">대회 종료 후에만 공개됩니다 · 참가자 ${RANKING.length>6?RANKING.length:70}명</p>
+    <div class="card" style="padding:6px 0">
+    <table><tr><th style="padding-left:18px">등수</th><th>닉네임</th><th style="text-align:right;padding-right:18px">총점</th></tr>
+    ${RANKING.map(r=>`<tr class="${r.me?'sel':''}">
+      <td style="padding-left:18px">${r.rank<=3?['🥇','🥈','🥉'][r.rank-1]:r.rank}</td>
+      <td>${r.nick}${r.me?' <span class="pill">나</span>':''}</td>
+      <td style="text-align:right;padding-right:18px"><b>${r.score.toLocaleString()}</b></td></tr>`).join('')}
+    </table></div>`;
+}
+
+// ---------------- problem solve view ----------------
+function viewProblem(){
+  const isStep=STATE.problem==='stepup';
+  const leftTabs=`<div class="tabs">
+     <button class="tab ${STATE.leftTab==='statement'?'active':''}" onclick="go('problem',{leftTab:'statement'})">문제</button>
+     <button class="tab ${STATE.leftTab==='sim'?'active':''}" onclick="go('problem',{leftTab:'sim'})">시뮬레이터</button></div>`;
+  const rightTabsArr=isStep?[['submit','제출'],['history','제출 내역']]
+                           :[['submit','제출'],['history','제출 내역'],['eval','중간 평가']];
+  const rightTabs=`<div class="tabs">${rightTabsArr.map(([k,l])=>
+     `<button class="tab ${STATE.rightTab===k?'active':''}" onclick="go('problem',{rightTab:'${k}',evalSel:null,subSel:null})">${l}</button>`).join('')}</div>`;
+
+  return `<div class="solve">
+    <div class="pane left">
+      <div class="pane-head">${leftTabs}<button class="btn ghost" style="padding:6px 12px">💬 질문하기</button></div>
+      <div class="pane-body" id="leftBody">${STATE.leftTab==='sim'?'':renderStatement()}</div>
+    </div>
+    <div class="pane right">
+      <div class="pane-head">${rightTabs}</div>
+      <div class="pane-body" id="rightBody"></div>
+      <div id="rightFoot"></div>
+    </div>
+  </div>`;
+}
+function renderStatement(){return `<div class="statement">${STATEMENT}</div>`;}
+
+function mountProblem(){ mountLeft(); mountRight(); }
+function mountLeft(){
+  const lb=document.getElementById('leftBody');
+  if(STATE.leftTab==='sim'){lb.innerHTML=simHTML();initSim();}
+  else {removeSimKeys();lb.innerHTML=renderStatement();}
+}
+function openSub(id){STATE.subSel=id;mountRight();}
+function backSub(){STATE.subSel=null;mountRight();}
+function openEval(i){if(CH_EVALS[i].rank==null){toast('아직 중간 평가 대기 중입니다');return;}STATE.evalSel=i;mountRight();}
+function backEval(){STATE.evalSel=null;mountRight();}
+function mountRight(){
+  const rb=document.getElementById('rightBody'), rf=document.getElementById('rightFoot');
+  const isStep=STATE.problem==='stepup';
+  if(STATE.rightTab==='history'){
+    rf.innerHTML='';
+    rb.innerHTML = STATE.subSel!=null ? subDetailHTML(isStep,STATE.subSel) : (isStep?stepHistoryHTML():chHistoryHTML());
+    return;
+  }
+  if(STATE.rightTab==='eval'){
+    rf.innerHTML='';
+    rb.innerHTML = STATE.evalSel!=null ? evalDetailHTML(STATE.evalSel) : evalHTML();
+    return;
+  }
+  if(STATE.rightTab==='submit'){
+    if(isStep){
+      rb.innerHTML=`<div class="rule" style="margin-bottom:12px">📖 대회 규칙·개발 도구 사용 안내</div>
+        <textarea id="outBox" rows="14" placeholder="시뮬레이터로 만들거나 직접 입력한 '출력'을 여기에 제출합니다 (코드 아님)"></textarea>`;
+      rf.innerHTML=`<div class="submitbar" style="flex-direction:column;align-items:stretch;gap:10px">
+        <div class="row" style="gap:10px;align-items:center"><span class="muted" style="font-size:12px;white-space:nowrap">제출 대상</span>
+          ${missionSelect('setMission')}<span class="muted" style="font-size:12px">미션별 개별 제출</span></div>
+        <div class="row" style="gap:10px">
+          <button class="btn ghost" style="flex:1" onclick="downloadInput()">입력 다운로드</button>
+          <button class="btn" style="flex:1" onclick="submitStep()">⚲ 제출</button></div></div>`;
+    } else {
+      rb.innerHTML=`<div class="rule" style="margin-bottom:12px">📖 대회 규칙·개발 도구 사용 안내</div>
+        <div class="editor" contenteditable="true" spellcheck="false">#include &lt;bits/stdc++.h&gt;
+using namespace std;
+int main(){
+    int N,M; cin&gt;&gt;N&gt;&gt;M;
+    // ... 휴리스틱 풀이 ...
+    return 0;
+}</div>`;
+      rf.innerHTML=`<div class="submitbar"><span class="pill">data.bin</span><div style="flex:1"></div>
+        <span class="muted" style="font-size:12px">C++20 · g++ 14.2.0</span>
+        <button class="btn" onclick="submitChallenge()">⚲ 제출</button></div>`;
+    }
+  }
+}
+
+// rows are clickable -> per-sample-test detail + download
+function stepHistoryHTML(){
+  const mNo=STEP_SEEDS[STATE.mission].mission;
+  const rows=STEP_HISTORY.filter(h=>h.mission===mNo);
+  return `<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0">미션 ${mNo} 제출 내역</h3>
+      ${missionSelect('setMission')}
+    </div>
+   <p class="muted" style="margin:0 0 8px;font-size:12px">스텝 업은 <b>미션마다 따로</b> 제출·채점됩니다. 행을 누르면 제출 상세를 볼 수 있어요.</p>
+   <table><tr><th>#</th><th>제출 시각</th><th>결과</th></tr>
+   ${rows.length?rows.map(h=>`<tr style="cursor:pointer" onclick="openSub(${h.id})"><td>${h.id}</td><td class="muted">${h.at}</td>
+     <td style="min-width:90px">${cellBar(h.score,h.max)}</td></tr>`).join('')
+     :'<tr><td colspan="3" class="muted" style="padding:16px;text-align:center">이 미션엔 아직 제출이 없어요.</td></tr>'}
+   </table>`;
+}
+function chHistoryHTML(){
+  return `<h2 style="margin:4px 0 8px">최종 제출 목록</h2>
+   <p class="muted" style="margin:0 0 8px;font-size:12px">행을 누르면 샘플 테스트별 점수를 볼 수 있어요. 평가에 쓸 제출을 <b>대표 코드</b>로 지정하세요.</p>
+   <table><tr><th>#</th><th>제출 시각</th><th>결과(비용)</th><th>대표 코드</th></tr>
+   ${CH_HISTORY.map(h=>`<tr class="${h.cur?'sel':''}" style="cursor:pointer" onclick="openSub(${h.id})"><td>${h.id}</td><td class="muted">${h.at}</td>
+     <td><span class="ok">✓ 성공</span> · <b>${h.cost.toLocaleString()}</b></td>
+     <td>${h.cur?'<span class="ok" style="font-size:12px;white-space:nowrap">★ 현재 대표</span>'
+              :`<button class="btn ghost" style="padding:4px 10px;white-space:nowrap" onclick="event.stopPropagation();setRep(${h.id})">대표 코드로 설정</button>`}</td></tr>`).join('')}
+   </table>`;
+}
+function setRep(id){CH_HISTORY.forEach(x=>x.cur=(x.id===id));mountRight();
+  toast(`제출 #${id}을(를) 대표 코드로 설정했습니다.`);}
+function sampleRows(seed){const r=[];for(let i=1;i<=4;i++){
+  const score=Math.max(45000,100000-((seed*7+i*131)%48000));
+  r.push({i,score,ms:25+((seed+i*13)%80),cost:900+((seed*3+i*37)%1100)});}return r;}
+function subDetailHTML(isStep,id){ return isStep ? stepSubDetail(id) : chSubDetail(id); }
+function stepSubDetail(id){
+  // Step Up = one output for one mission. Show that single mission result, not
+  // a fabricated multi-sample table.
+  const s=STEP_HISTORY.find(x=>x.id===id)||STEP_HISTORY[0];
+  const seed=STEP_SEEDS.find(m=>m.mission===s.mission)||STEP_SEEDS[0];
+  const ratio=s.score/s.max, full=s.score>=s.max;
+  const cost=full?seed.ref:Math.round(seed.ref/ratio);
+  return `<div class="back" onclick="backSub()">← 제출 내역</div>
+   <div class="row" style="justify-content:space-between;align-items:center;margin:10px 0 4px">
+     <h2 style="margin:0">제출 #${s.id} <span class="muted" style="font-size:14px;font-weight:400">· 미션 ${s.mission}</span></h2>
+     <button class="btn ghost" style="padding:7px 12px;white-space:nowrap" onclick="toast('제출 #${s.id} 내 출력 다운로드 (데모)')">⬇ 내 출력</button>
+   </div>
+   <p class="muted" style="margin:0 0 14px">${s.at} · 스텝 업은 미션 1개에 대한 출력 1건입니다.</p>
+   <div class="card" style="margin-bottom:12px">
+     <div class="k muted" style="font-size:11px;margin-bottom:6px">미션 ${s.mission} 점수</div>
+     ${bar(s.score,s.max)}
+     <div class="row" style="gap:20px;margin-top:12px;font-size:13px;flex-wrap:wrap">
+       <span>내 비용 <b>${cost}</b></span><span>기준 비용 <b>${seed.ref}</b></span>
+       <span>${full?'<span class="ok">✓ 만점</span>':'부분점수'}</span></div>
+   </div>
+   <button class="btn ghost" onclick="toast('미션 ${s.mission} 입력 다운로드 (데모)')">⬇ 미션 입력 다운로드</button>`;
+}
+function chSubDetail(id){
+  const isStep=false;   // this view is Challenge-only; ternaries take the else-branch
+  const s=CH_HISTORY.find(x=>x.id===id)||CH_HISTORY[0];
+  const rows=sampleRows(id); const sum=rows.reduce((a,r)=>a+r.score,0);
+  return `<div class="back" onclick="backSub()">← 제출 내역</div>
+   <div class="row" style="justify-content:space-between;margin:10px 0 4px">
+     <h2 style="margin:0">제출 #${s.id}</h2>
+     <button class="btn ghost" style="padding:7px 12px" onclick="toast('제출 #${s.id} ${isStep?'출력':'소스 코드'} 다운로드 (데모)')">⬇ ${isStep?'내 출력':'소스'} 다운로드</button>
+   </div>
+   <p class="muted" style="margin:0 0 12px">${s.at} · 샘플 점수 합 <b>${sum.toLocaleString()}</b></p>
+   <table><tr><th>샘플</th>${isStep?'':'<th>비용</th>'}<th>점수</th><th>실행시간</th><th>입력</th></tr>
+   ${rows.map(r=>`<tr><td>#${r.i}</td>
+     ${isStep?'':`<td><b>${r.cost.toLocaleString()}</b></td>`}
+     <td style="min-width:90px">${cellBar(r.score,100000)}</td>
+     <td class="muted">${r.ms} ms</td>
+     <td><button class="btn ghost" style="padding:4px 10px" onclick="toast('샘플 #${r.i} 입력 다운로드 (데모)')">⬇</button></td></tr>`).join('')}
+   </table>`;
+}
+function evalHTML(){
+  return `<h2 style="margin:4px 0 8px">모든 중간 평가 보기</h2>
+   <p class="muted" style="margin:0 0 8px;font-size:12px">행을 누르면 테스트케이스별 점수·등수를 볼 수 있어요.</p>
+   <table><tr><th>중간 평가 시각</th><th>결과</th><th>노트</th></tr>
+   ${CH_EVALS.map((e,i)=>`<tr style="cursor:pointer" onclick="openEval(${i})"><td>${e.at}</td>
+     <td>${e.rank?`🌸 <b>${e.rank}</b>`:'<span class="muted">대기 중</span>'}</td>
+     <td class="muted">${e.note}</td></tr>`).join('')}
+   </table>
+   <div class="card" style="margin-top:14px"><b>중간 평가 안내</b>
+     <p class="muted" style="margin:6px 0 0">매일 09:00·18:00(KST)에 새 비공개 데이터로 평가합니다.</p></div>`;
+}
+function rankBadge(r){return r===1?'<span class="ok"><b>1위</b></span>':`${r}위`;}
+function evalDetailHTML(i){
+  const e=CH_EVALS[i];
+  const ranges=['B~U(100,399)','B~U(400,700)','B~U(701,1000)','W~U(250,333)','W~U(334,416)','W~U(417,500)'];
+  const cases=ranges.map((name,j)=>({name,score:Math.max(60000,100000-((i*9+j*113)%39000)),
+     rank:1+((i+j)%4===0?0:(i*5+j*31)%6),ms:30+((i*7+j*19)%90)}));
+  return `<div class="back" onclick="backEval()">← 중간 평가 목록</div>
+   <h2 style="margin:8px 0 2px">${e.note}</h2>
+   <p class="muted" style="margin:0 0 12px">${e.at}</p>
+   <div class="card" style="margin-bottom:14px"><div class="row" style="gap:30px">
+     <div><div class="k muted" style="font-size:11px">참가자 수</div><div style="font-size:20px;font-weight:700">70명</div></div>
+     <div><div class="k muted" style="font-size:11px">내 등수</div><div style="font-size:20px;font-weight:700">🌸 ${e.rank}</div></div>
+     <div><div class="k muted" style="font-size:11px">비용 합</div><div style="font-size:20px;font-weight:700">2,124</div></div>
+   </div></div>
+   <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 8px">
+     <h3 style="margin:0">테스트케이스별 점수 / 등수</h3>
+     <button class="btn ghost" style="padding:6px 12px" onclick="toast('${e.note} 전체 테스트데이터 다운로드 (데모)')">⬇ 전체 입력 다운로드</button>
+   </div>
+   <table><tr><th>테스트케이스</th><th>내 점수</th><th>등수</th><th>실행시간</th><th>데이터</th></tr>
+   ${cases.map(c=>`<tr><td class="muted">${c.name}</td>
+     <td style="min-width:90px">${cellBar(c.score,100000)}</td>
+     <td>${rankBadge(c.rank)}</td><td class="muted">${c.ms} ms</td>
+     <td><button class="btn ghost" style="padding:4px 10px" onclick="toast('케이스 ${c.name} 입력 다운로드 (데모)')">입력 ⬇</button></td></tr>`).join('')}
+   </table>`;
+}
+
+// ---------------- simulator ----------------
+// Two modes: Step Up (mission preloaded, arrow keys AUTO-generate output) and
+// Challenge (EMPTY until you paste input; paste output or use arrows; a slider
+// scrubs the board state step by step — visualization only, no scoring shown).
+let SIM=null;
+function simHTML(){ return STATE.problem==='challenge' ? simHTMLChallenge() : simHTMLStep(); }
+function initSim(){ if(STATE.problem==='challenge') initChallenge(); else initStep(); }
+
+function parseInst(text){const L=text.split("\n");const[h,w]=L[0].split(" ").map(Number);
+  const[sr,sc]=L[1].split(" ").map(Number);
+  if(!(h>0&&w>0)||Number.isNaN(sr)||Number.isNaN(sc))throw new Error('bad input');
+  const dirty=new Set();
+  for(let r=0;r<h;r++){const row=L[2+r]||"";for(let c=0;c<w;c++)if(row[c]==='*')dirty.add(r+","+c);}
+  return{h,w,start:[sr,sc],dirty};}
+function boardState(g,moves,k){let pos=g.start.slice();const visited=new Set([pos.join(",")]);let offGrid=false;
+  for(let i=0;i<k&&i<moves.length;i++){const d={U:[-1,0],D:[1,0],L:[0,-1],R:[0,1]}[moves[i]];if(!d)continue;
+    const nr=pos[0]+d[0],nc=pos[1]+d[1];if(nr<0||nr>=g.h||nc<0||nc>=g.w){offGrid=true;break;}
+    pos=[nr,nc];visited.add(pos.join(","));}
+  return{pos,visited,offGrid};}
+function drawBoard(svgId,g,pos,visited){
+  const CELL=Math.floor(360/Math.max(g.h,g.w)),PAD=6;
+  const W=g.w*CELL+PAD*2,H=g.h*CELL+PAD*2;const svg=document.getElementById(svgId);if(!svg)return;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);let s="";
+  for(let r=0;r<g.h;r++)for(let c=0;c<g.w;c++){const x=PAD+c*CELL,y=PAD+r*CELL,key=r+","+c;
+    s+=`<rect x="${x}" y="${y}" width="${CELL-3}" height="${CELL-3}" rx="6" fill="#161a23" stroke="#222838"/>`;
+    if(g.dirty.has(key)){const cl=visited.has(key);
+      s+=`<circle cx="${x+(CELL-3)/2}" cy="${y+(CELL-3)/2}" r="${CELL*0.16}" fill="${cl?'var(--green)':'var(--dirty)'}"/>`;}}
+  const rx=PAD+pos[1]*CELL,ry=PAD+pos[0]*CELL;
+  s+=`<rect x="${rx+5}" y="${ry+5}" width="${CELL-13}" height="${CELL-13}" rx="5" fill="var(--robot)"/>`;
+  svg.innerHTML=s;}
+
+function addSimKeys(){removeSimKeys();SIM._k=onKey;window.addEventListener('keydown',onKey);}
+function removeSimKeys(){if(SIM&&SIM._k){window.removeEventListener('keydown',SIM._k);SIM._k=null;}}
+function onKey(ev){ if(!SIM)return;
+  const ae=document.activeElement;                       // don't hijack keys while typing in a field
+  if(ae&&(ae.tagName==='TEXTAREA'||ae.tagName==='INPUT'))return;
+  if(SIM.mode==='challenge')onKeyChallenge(ev); else onKeyStep(ev); }
+
+// ===== Step Up =====
+function simHTMLStep(){
+  return `<div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">시뮬레이터</h2>
+      ${missionSelect('setMission')}
+    </div>
+    <div class="grid2">
+      <div><svg id="simboard" viewBox="0 0 400 360" class="sim-grid" style="width:100%"></svg></div>
+      <div>
+        <div class="sim-hud">
+          <div><div class="k">Remaining</div><div class="v" id="simRem">0</div></div>
+          <div><div class="k">Turn</div><div class="v" id="simTurn">0</div></div>
+        </div>
+        <div class="keys"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 이동 · <kbd>z</kbd> 되돌리기 · <kbd>x</kbd> 다시실행 · <kbd>r</kbd> 리셋</div>
+        <div class="io"><div><div class="k muted" style="font-size:11px;margin-bottom:4px">입력 (주어짐)</div>
+          <textarea id="simIn" rows="6" readonly></textarea></div></div>
+        <div class="io"><div><div class="k muted" style="font-size:11px;margin-bottom:4px">출력 (자동 생성)</div>
+          <textarea id="simOut" rows="3" readonly></textarea></div></div>
+        <div id="simVerdict" class="muted" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+}
+function initStep(){const m=STEP_SEEDS[STATE.mission];const g=parseInst(m.input);
+  SIM={mode:'stepup',g,pos:g.start.slice(),visited:new Set([g.start.join(",")]),moves:[],redo:[],ref:m.ref};
+  document.getElementById('simIn').value=m.input.trimEnd();addSimKeys();drawStep();}
+function onKeyStep(ev){const k=ev.key.toLowerCase();
+  if(k==='z'){undoStep();ev.preventDefault();return;}
+  if(k==='x'){redoStep();ev.preventDefault();return;}
+  if(k==='r'){initStep();ev.preventDefault();return;}
+  const m=MOVES[ev.key];if(!m)return;ev.preventDefault();
+  const nr=SIM.pos[0]+m[0],nc=SIM.pos[1]+m[1];if(nr<0||nr>=SIM.g.h||nc<0||nc>=SIM.g.w)return;
+  SIM.pos=[nr,nc];SIM.moves.push(m[2]);SIM.redo=[];SIM.visited.add(SIM.pos.join(","));drawStep();}
+function recomputeStep(){const st=boardState(SIM.g,SIM.moves,SIM.moves.length);SIM.pos=st.pos;SIM.visited=st.visited;}
+function undoStep(){if(!SIM.moves.length)return;SIM.redo.push(SIM.moves.pop());recomputeStep();drawStep();}
+function redoStep(){if(!SIM.redo.length)return;SIM.moves.push(SIM.redo.pop());recomputeStep();drawStep();}
+function drawStep(){
+  drawBoard('simboard',SIM.g,SIM.pos,SIM.visited);
+  const rem=[...SIM.g.dirty].filter(k=>!SIM.visited.has(k)).length;
+  document.getElementById('simRem').textContent=rem;
+  document.getElementById('simTurn').textContent=SIM.moves.length;
+  document.getElementById('simOut').value=SIM.moves.join("");
+  const out=document.getElementById('outBox');if(out)out.value=SIM.moves.join("");
+  const vd=document.getElementById('simVerdict');
+  if(rem===0){const cost=SIM.moves.length,ratio=Math.min(SIM.ref/cost,1);
+    vd.innerHTML=`<span class="${cost<=SIM.ref?'ok':''}">${cost<=SIM.ref?'✓ 만점':'부분점수'} · 비용 ${cost} / 기준 ${SIM.ref} · 점수 ${Math.floor(100000*ratio).toLocaleString()}</span>`;}
+  else vd.textContent=`먼지 ${rem}개 남음`;}
+function missionSelect(handler){
+  return `<select class="dd" onchange="${handler}(+this.value)">${STEP_SEEDS.map((m,i)=>
+    `<option value="${i}" ${i===STATE.mission?'selected':''}>미션 ${m.mission}</option>`).join('')}</select>`;
+}
+function setMission(i){STATE.mission=i;
+  if(STATE.leftTab==='sim'){const lb=document.getElementById('leftBody');lb.innerHTML=simHTMLStep();initStep();}
+  mountRight();}
+function downloadInput(){toast(`미션 ${STEP_SEEDS[STATE.mission].mission} 입력을 다운로드했습니다 (데모)`);}
+
+// ===== Challenge (empty until input; paste output + slider) =====
+function simHTMLChallenge(){
+  return `<h2 style="margin:0 0 8px">시뮬레이터 <span class="muted" style="font-size:12px;font-weight:400">— 입력/출력을 넣으면 단계별로 시각화</span></h2>
+    <div class="grid2">
+      <div>
+        <svg id="simboard" viewBox="0 0 400 360" class="sim-grid" style="width:100%"></svg>
+        <div style="margin-top:8px">
+          <input id="simSlider" type="range" min="0" max="0" value="0" oninput="onSlide(this.value)" disabled style="width:100%">
+          <div class="row" style="justify-content:space-between">
+            <span class="muted" id="simStep" style="font-size:12px">단계 0 / 0</span>
+            <span id="simWarn" class="bad" style="font-size:12px"></span></div>
+        </div>
+      </div>
+      <div>
+        <div class="sim-hud">
+          <div><div class="k">Remaining</div><div class="v" id="simRem">-</div></div>
+          <div><div class="k">Step</div><div class="v" id="simTurn">0</div></div>
+        </div>
+        <div class="io"><div><div class="k muted" style="font-size:11px;margin-bottom:4px">입력 (붙여넣기)</div>
+          <textarea id="simIn" rows="6" placeholder="입력 데이터를 붙여넣으면 보드가 표시됩니다" oninput="applyChallenge()"></textarea></div></div>
+        <div class="io"><div><div class="k muted" style="font-size:11px;margin-bottom:4px">출력 (붙여넣기 또는 방향키)</div>
+          <textarea id="simOut" rows="3" placeholder="출력(이동 문자열)을 붙여넣거나, 보드를 클릭 후 방향키로 조작" oninput="applyChallenge()"></textarea></div></div>
+        <div class="keys"><kbd>↑↓←→</kbd> 이동(출력에 추가) · <kbd>z</kbd> 한 칸 지움 · 슬라이더로 단계 이동</div>
+        <div id="simVerdict" class="muted" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+}
+function initChallenge(){SIM={mode:'challenge',g:null,moves:[],frame:0};addSimKeys();drawChallenge();}
+function applyChallenge(){
+  const inp=(document.getElementById('simIn')||{}).value||'';
+  try{ SIM.g = inp.trim()? parseInst(inp): null; }catch(e){ SIM.g=null; }
+  const out=(document.getElementById('simOut')||{}).value||'';
+  SIM.moves=[...out].map(c=>c.toUpperCase()).filter(c=>'UDLR'.includes(c));
+  SIM.frame=SIM.moves.length;                    // jump to the end on (re)apply
+  drawChallenge();
+}
+function onSlide(v){SIM.frame=Math.max(0,Math.min(SIM.moves.length,+v));drawChallenge();}
+function onKeyChallenge(ev){
+  if(ev.key.toLowerCase()==='z'){const ta=document.getElementById('simOut');if(ta){ta.value=ta.value.slice(0,-1);applyChallenge();}ev.preventDefault();return;}
+  const m=MOVES[ev.key];if(!m)return;ev.preventDefault();
+  const ta=document.getElementById('simOut');if(ta){ta.value=(ta.value||'')+m[2];applyChallenge();}}
+function drawChallenge(){
+  const svg=document.getElementById('simboard');if(!svg)return;
+  const slider=document.getElementById('simSlider');
+  if(!SIM.g){
+    svg.setAttribute('viewBox','0 0 400 360');
+    svg.innerHTML='<text x="200" y="180" fill="#5b6273" font-size="14" text-anchor="middle">입력을 붙여넣으면 보드가 표시됩니다</text>';
+    if(slider){slider.max=0;slider.value=0;slider.disabled=true;}
+    document.getElementById('simRem').textContent='-';
+    document.getElementById('simTurn').textContent='0';
+    document.getElementById('simStep').textContent='단계 0 / 0';
+    document.getElementById('simWarn').textContent='';
+    document.getElementById('simVerdict').textContent='';return;}
+  const st=boardState(SIM.g,SIM.moves,SIM.frame);
+  drawBoard('simboard',SIM.g,st.pos,st.visited);
+  if(slider){slider.max=SIM.moves.length;slider.value=SIM.frame;slider.disabled=SIM.moves.length===0;}
+  const rem=[...SIM.g.dirty].filter(k=>!st.visited.has(k)).length;
+  document.getElementById('simRem').textContent=rem;
+  document.getElementById('simTurn').textContent=SIM.frame;
+  document.getElementById('simStep').textContent=`단계 ${SIM.frame} / ${SIM.moves.length}`;
+  document.getElementById('simWarn').textContent=st.offGrid?'⚠ 격자 밖으로 나가는 이동':'';
+  const vd=document.getElementById('simVerdict');
+  vd.innerHTML=(SIM.frame===SIM.moves.length&&SIM.moves.length>0&&!st.offGrid)
+    ?(rem===0?`<span class="ok">✓ 모든 먼지 청소 — 비용 ${SIM.moves.length}</span>`:`먼지 ${rem}개 남음 (시각화)`):'';}
+function checkStepOutput(seed,out){
+  let g; try{g=parseInst(seed.input);}catch(e){return{valid:false,msg:'입력 파싱 오류'};}
+  const moves=[...(out||'')].map(c=>c.toUpperCase()).filter(c=>'UDLR'.includes(c));
+  if(!moves.length)return{valid:false,msg:'출력이 비어 있습니다'};
+  const st=boardState(g,moves,moves.length);
+  if(st.offGrid)return{valid:false,msg:'격자 밖으로 나가는 이동'};
+  const rem=[...g.dirty].filter(k=>!st.visited.has(k)).length;
+  if(rem>0)return{valid:false,msg:`먼지 ${rem}개가 남았습니다`};
+  const cost=moves.length, score=Math.floor(seed.budget*Math.min(seed.ref/cost,1));
+  return{valid:true,cost,score};
+}
+function submitStep(){
+  const seed=STEP_SEEDS[STATE.mission], m=seed.mission;
+  const out=(document.getElementById('outBox')||{}).value||'';
+  const r=checkStepOutput(seed,out);
+  if(!r.valid){
+    toast(`미션 ${m} 제출 — 채점 불가`,r.msg);
+    pushNotif('✕',`미션 ${m} 제출 채점 완료`,`무효 (0점) · ${r.msg}`);
+    return;
+  }
+  // Step Up scoring is deterministic/instant -> reflect the score in the notice.
+  toast(`미션 ${m} 채점 완료 — 점수 ${r.score.toLocaleString()}`,`비용 ${r.cost} / 기준 ${seed.ref}`);
+  pushNotif('✓',`미션 ${m} 제출 채점 완료`,`점수 ${r.score.toLocaleString()} · 비용 ${r.cost}/기준 ${seed.ref}`);
+}
+function submitChallenge(){const id=10000+Math.floor(performance.now()%900);
+  toast(`제출 #${id}의 채점이 완료되었습니다.`,`비용 합: 2,142`);
+  pushNotif('✓',`제출 #${id} 채점 완료`,`샘플 비용 합 2,142 · 방금`);}
+
+// ---------------- notifications ----------------
+const NOTIFS=[
+  {icon:'✓',msg:'제출 #10767 채점 완료',sub:'샘플 점수 합 2,142 · 방금'},
+  {icon:'🏅',msg:'연습 중간평가 #9 결과 공개',sub:'등수 2852 / 70명 · 1시간 전'},
+  {icon:'📢',msg:'6월 모의고사 #3 진행 중',sub:'다음 중간평가 18:00 · 어제'},
+];
+let notifOpen=false;
+function toggleNotif(ev){ if(ev)ev.stopPropagation(); notifOpen=!notifOpen; drawNotif(); }
+function closeNotif(){ notifOpen=false; drawNotif(); }
+function pushNotif(icon,msg,sub){ NOTIFS.unshift({icon,msg,sub});
+  const b=document.getElementById('notifBadge'); if(b){b.style.display='';b.textContent=NOTIFS.length;} }
+function drawNotif(){
+  const p=document.getElementById('notifPanel'), b=document.getElementById('notifBadge');
+  if(!notifOpen){ p.innerHTML=''; return; }
+  if(b) b.style.display='none';
+  p.innerHTML=`<div class="notif-panel" onclick="event.stopPropagation()">
+    <div class="notif-head">알림 <span class="muted" style="font-size:12px;cursor:pointer" onclick="closeNotif()">✕</span></div>
+    ${NOTIFS.length?NOTIFS.map(n=>`<div class="notif-item"><span class="notif-ic">${n.icon}</span>
+        <div><div>${n.msg}</div><div class="muted" style="font-size:12px;margin-top:2px">${n.sub}</div></div></div>`).join('')
+      :'<div class="notif-empty">알림이 없습니다</div>'}
+  </div>`;
+}
+window.addEventListener('click',()=>{ if(notifOpen) closeNotif(); });
+
+// ---------------- toast ----------------
+function toast(msg,sub){const t=document.getElementById('toast');
+  t.innerHTML=`<div class="toast"><span class="x" onclick="this.closest('.toast').remove()">✕</span>
+    <b>✓</b> ${msg}${sub?`<div class="muted" style="margin-top:4px">(${sub})</div>`:''}</div>`;
+  setTimeout(()=>{const e=t.querySelector('.toast');if(e)e.remove();},6000);}
+
+render();
+</script>
+</body>
+</html>

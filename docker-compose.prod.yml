@@ -1,0 +1,98 @@
+# Production single-box deploy (free 24/7 — e.g. Oracle Cloud Always Free A1).
+# See docs/DEPLOY.md §10 for the full walkthrough.
+#
+#   1) Fill api/.env with PROD values (APP_ENV=prod, COOKIE_SECURE=true, the https URLs,
+#      Google OAuth creds, SECRET_KEY, EVAL_SEED_SECRET, ADMIN_EMAILS).
+#   2) Put DOMAIN + POSTGRES_PASSWORD in a .env next to this file (or export them).
+#   3) Bring it up:
+#        docker compose -f docker-compose.prod.yml up -d --build                 # web+api+db+caddy
+#        docker compose -f docker-compose.prod.yml --profile grader up -d --build # + Challenge grading & 09/18 scheduler
+#
+# WITHOUT --profile grader you already have a working site: login, Step Up (graded
+# INLINE by the API — no sandbox), authoring, registration, standings. Add the grader
+# profile to grade Challenge submissions and run the daily 09:00/18:00 KST evaluations.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dmpc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dmpc}
+      POSTGRES_DB: dmpc
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro   # applied on FIRST init only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dmpc"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: { context: ., dockerfile: api/Dockerfile }
+    restart: unless-stopped
+    env_file: [./api/.env]                       # PROD secrets + https URLs (required)
+    environment:
+      DATABASE_URL: postgresql://dmpc:${POSTGRES_PASSWORD:-dmpc}@postgres:5432/dmpc
+    expose: ["8000"]                             # internal only; Caddy is the public edge
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API: "1"                     # use the real API (not the mock) in prod
+    restart: unless-stopped
+    expose: ["3000"]
+    depends_on:
+      api: { condition: service_healthy }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]                  # automatic HTTPS (Let's Encrypt) for DOMAIN
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to your duckdns subdomain (e.g. dmpc.duckdns.org)}
+    volumes:
+      - ./deploy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web, api]
+
+  # --- grader profile (Challenge grading + 09/18 KST evaluations) ----------------
+  worker:
+    build: { context: ., dockerfile: worker/Dockerfile }
+    restart: unless-stopped
+    profiles: ["grader"]
+    env_file: [./api/.env]                       # EVAL_SEED_SECRET
+    environment:
+      DATABASE_URL: postgresql://dmpc:${POSTGRES_PASSWORD:-dmpc}@postgres:5432/dmpc
+      ISOLATE_BOX_ID: "0"
+    privileged: true                             # isolate needs cgroup access
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  scheduler:
+    build: { context: ., dockerfile: worker/Dockerfile }
+    restart: unless-stopped
+    profiles: ["grader"]
+    command: ["python3", "worker/scheduler.py"]
+    env_file: [./api/.env]
+    environment:
+      DATABASE_URL: postgresql://dmpc:${POSTGRES_PASSWORD:-dmpc}@postgres:5432/dmpc
+      ISOLATE_BOX_ID: "1"                        # distinct box from the sample worker
+    privileged: true
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

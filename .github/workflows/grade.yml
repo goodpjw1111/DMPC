@@ -1,0 +1,76 @@
+# FREE x86 grader on GitHub Actions (see docs/GRADING_ENV.md, option #2).
+#
+# Why this works: GitHub-hosted runners are ephemeral, clean, network-isolatable
+# x86 (AMD EPYC) VMs, free + unlimited on PUBLIC repos. The throwaway VM is itself
+# a sandbox; isolate inside it enforces the 2s/1024MB per-run limits. Slower than
+# c7a, so DMPC_CALIBRATION_FACTOR scales the CPU budget to be fair (calibration.py).
+#
+# SECURITY: run this in a DEDICATED repo with ZERO secrets except a single
+# scoped callback token. Never expose org secrets to a job that runs untrusted code.
+#
+# This is a SKELETON. The scheduler triggers it via repository_dispatch with the
+# eval-round id; the job grades that round's submissions and POSTs results back.
+
+name: grade
+on:
+  repository_dispatch:
+    types: [grade-round]
+  workflow_dispatch:
+    inputs:
+      round_id: { description: "evaluation_rounds.id", required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  grade:
+    runs-on: ubuntu-24.04        # matches NYPC OS (Ubuntu 24.04)
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install isolate + toolchains
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcap-dev build-essential git
+          git clone --depth 1 https://github.com/ioi/isolate /tmp/isolate
+          sudo make -C /tmp/isolate install        # NO `|| true`: isolate IS the sandbox.
+          # Wave-1 langs; add the rest per README §5. (Heavy toolchains: cache them.)
+
+      - name: Verify isolate is present (hard gate before any untrusted code)
+        run: |
+          set -euo pipefail
+          isolate --version
+          command -v isolate
+
+      - name: Tune for reproducible timing
+        run: |
+          # best-effort on a shared runner; real fidelity needs a dedicated host (§6)
+          echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
+
+      - name: Set calibration factor for this runner class
+        run: echo "DMPC_CALIBRATION_FACTOR=1.5" >> "$GITHUB_ENV"  # EPYC 7763 ≈ 0.68x c7a → ~1.5
+
+      - name: Grade the round
+        env:
+          ROUND_ID: ${{ github.event.client_payload.round_id || inputs.round_id }}
+          API_BASE_URL: ${{ vars.GRADER_API_BASE_URL }}
+          # SECURITY: NO database DSN in this job — it runs untrusted contestant code.
+          # The ONLY secrets are a scoped HMAC callback token + the hidden-seed secret;
+          # all data in/out goes through the API, which authenticates the callback and
+          # writes scores server-side. (A direct DSN here would let any sandbox-escape
+          # write arbitrary scores.)
+          CALLBACK_TOKEN: ${{ secrets.GRADER_CALLBACK_TOKEN }}
+          EVAL_SEED_SECRET: ${{ secrets.EVAL_SEED_SECRET }}   # derive identical hidden seeds
+        run: |
+          echo "TODO(Phase 2 split-mode): API-callback variant of worker/grade_round.py for round $ROUND_ID"
+          # The DB-connected evaluator (worker/grade_round.evaluate_round) + scheduler
+          # (worker/scheduler.py) are the implemented LOCAL grader path (Oracle VM, has DB).
+          # This split-mode job is the no-DB alternative; it must:
+          # 1) PULL the round (idem_key/scheduled_at), its challenge problems' scoring_config,
+          #    and each user's representative submission (created_at<=scheduled_at) from the API.
+          # 2) derive_seeds(EVAL_SEED_SECRET, idem_key, problem_key, k, lo, hi)  [identical to local].
+          # 3) run each rep over those seeds in isolate (no net, 2s*factor / 1024MB).
+          # 4) round_scoring.score_round(...) -> case_results + standings.
+          # 5) POST results back to the API with CALLBACK_TOKEN (HMAC-signed) — never a DB DSN.

@@ -1,0 +1,52 @@
+# FREE Challenge SAMPLE grader on GitHub Actions (card-free path, docs/DEPLOY.md §12).
+# Drains the per-submission sample-cost queue (worker.py --once) on an ephemeral runner.
+# The throwaway VM is the outer sandbox; isolate inside enforces 2s/1024MB per run.
+#
+# Cadence: ~every 10 min (GitHub may delay/skip on idle repos). For instant feedback,
+# also trigger it on demand from the dashboard (Run workflow) or via repository_dispatch.
+#
+# SECURITY NOTE: this job holds DATABASE_URL (a Neon secret) AND runs untrusted
+# contestant code inside isolate. For a school contest that is an acceptable trade-off;
+# for higher assurance use the no-DSN HMAC-callback split (.github/workflows/grade.yml).
+
+name: grade-samples
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [grade-samples]
+
+permissions:
+  contents: read
+
+concurrency:                 # never run two drains at once (they'd double-claim)
+  group: grade-samples
+  cancel-in-progress: false
+
+jobs:
+  grade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install isolate + toolchains (gcc/g++/python for the enabled languages)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcap-dev build-essential git
+          git clone --depth 1 https://github.com/ioi/isolate /tmp/isolate
+          sudo make -C /tmp/isolate install       # isolate IS the per-run sandbox
+          isolate --version
+
+      - run: pip install --no-cache-dir asyncpg
+
+      - name: Drain the sample-grading queue
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DMPC_CALIBRATION_FACTOR: "1.5"          # EPYC runner ≈ 0.68x c7a; measure to refine
+          ISOLATE_BOX_ID: "0"
+        run: python worker/worker.py --once

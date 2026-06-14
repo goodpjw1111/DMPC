@@ -1,0 +1,54 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run test suite (stdlib only — no deps needed)
+        run: |
+          set -e
+          for t in \
+            judge/test_scoring.py judge/test_calibration.py judge/test_grader.py \
+            judge/test_standings.py judge/test_eval_round.py judge/test_challenge_grader.py \
+            judge/test_round_scoring.py judge/test_authoring.py \
+            api/tests/test_oidc_claims.py api/tests/test_dev_login.py api/tests/test_prod_config.py \
+            api/tests/test_admin_authoring.py api/tests/test_replays.py api/tests/test_registration.py \
+            api/tests/test_nickname.py api/tests/test_schedule.py \
+            api/tests/test_grading_service.py api/tests/test_round_service.py \
+            worker/test_grade_round.py problems/example_clean/test_pipeline.py \
+            problems/clean_robot/test_gen.py; do
+            echo "== $t =="
+            python "$t"
+          done
+      - name: Byte-compile backend
+        # compileall recurses packages (won't drift if a file/subdir is added) and
+        # catches syntax errors anywhere under these trees, not a hardcoded glob.
+        run: python -m compileall -q judge worker api/app
+
+  web-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

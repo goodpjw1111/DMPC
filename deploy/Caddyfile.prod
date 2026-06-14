@@ -1,0 +1,22 @@
+# Compose-internal Caddy (used by docker-compose.prod.yml). Caddy is the public edge:
+# it terminates TLS (automatic Let's Encrypt for $DOMAIN) and reverse-proxies to the
+# `web` and `api` SERVICES on the compose network — single origin, so cookies are
+# first-party (SameSite=Lax + __Host- work, no CORS).
+#
+# (For a host-installed Caddy instead of a container, use deploy/Caddyfile, which
+#  targets 127.0.0.1:8000 / 127.0.0.1:3000.)
+
+{$DOMAIN} {
+    encode zstd gzip
+
+    handle /api/*    { reverse_proxy api:8000 }
+    handle /auth/*   { reverse_proxy api:8000 }
+    handle /healthz  { reverse_proxy api:8000 }
+    handle           { reverse_proxy web:3000 }   # everything else -> Next.js
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

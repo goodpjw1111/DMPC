@@ -1,0 +1,100 @@
+# Local dev orchestration.
+#   docker compose up postgres redis api web
+# The grader worker needs Linux + isolate (and ideally a microVM/gVisor runtime),
+# so it lives behind the `grader` profile and is NOT started by default:
+#   docker compose --profile grader up worker
+#
+# Production runs the worker on a SEPARATE HOST from web/api (see README §2, §4).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dmpc
+      POSTGRES_PASSWORD: dmpc
+      POSTGRES_DB: dmpc
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Auto-applied on first init only:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dmpc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  api:
+    # context = repo root so the image can include judge/ and problems/ (imported at startup).
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    # Optional so a fresh clone (api/.env is gitignored) still boots: the dev vars
+    # below are enough for local run; real secrets come from api/.env when present.
+    env_file:
+      - path: ./api/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://dmpc:dmpc@postgres:5432/dmpc
+      WEB_ORIGIN: http://localhost:3000
+      API_BASE_URL: http://localhost:8000
+    ports: ["8000:8000"]
+    healthcheck:
+      # slim image has no curl; use python (already in the image) to hit /healthz.
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8000
+    ports: ["3000:3000"]
+    # wait for the API to be READY (accepting connections), not just started.
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Grader — opt-in, separate host in production. Drains the per-submission sample queue.
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    profiles: ["grader"]
+    environment:
+      DATABASE_URL: postgresql://dmpc:dmpc@postgres:5432/dmpc
+      ISOLATE_BOX_ID: "0"
+    # isolate needs cgroup access; in real deployment use a microVM/gVisor runtime.
+    privileged: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Scheduler — opt-in. Flips contest status, creates 09/18 KST rounds, grades them.
+  # Runs grade_round locally (this host has DB + isolate). Needs its OWN box id.
+  scheduler:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    profiles: ["grader"]
+    command: ["python3", "worker/scheduler.py"]
+    environment:
+      DATABASE_URL: postgresql://dmpc:dmpc@postgres:5432/dmpc
+      ISOLATE_BOX_ID: "1"                 # distinct from the sample worker (box 0)
+      # Server secret for deriving HIDDEN round seeds (NOT the API cookie key). Set in prod.
+      EVAL_SEED_SECRET: ${EVAL_SEED_SECRET:-dev-eval-seed-secret-change-me}
+    privileged: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

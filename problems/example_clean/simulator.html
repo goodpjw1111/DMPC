@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>청소 로봇 — 시뮬레이터 (Step Up 예시)</title>
+<style>
+  :root { --bg:#0b0d12; --fg:#e6e8ee; --muted:#9aa3b2; --line:#2a2f3a;
+          --robot:#4f8cff; --dirty:#f0a44a; --clean:#3ecf8e; --panel:#12151c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family: system-ui,-apple-system,'Segoe UI',sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 18px 60px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 18px; }
+  .layout { display:flex; gap:24px; flex-wrap:wrap; }
+  .left { flex: 1 1 360px; }
+  .right { flex: 1 1 280px; }
+  svg { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:100%; height:auto; }
+  .hud { margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { background:var(--panel); border:1px solid var(--line); border-radius:999px;
+          padding:6px 12px; font-size:13px; }
+  .chip b { color:var(--robot); }
+  .ok { color: var(--clean); font-weight:600; }
+  .bad { color: var(--dirty); }
+  label { font-size:12px; color:var(--muted); display:block; margin:14px 0 4px; }
+  textarea { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line);
+             border-radius:8px; padding:10px; font-family:ui-monospace,Consolas,monospace; font-size:13px; }
+  .keys { margin-top:14px; color:var(--muted); font-size:13px; line-height:1.7; }
+  kbd { background:#1b2030; border:1px solid var(--line); border-radius:6px; padding:1px 7px; }
+  button { background:transparent; color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>청소 로봇 — 시뮬레이터</h1>
+  <p class="sub">Step Up 예시 문제 · 방향키로 로봇을 움직여 모든 먼지(●)를 청소하세요. 이동 수가 곧 비용이며, 적을수록 좋습니다.</p>
+
+  <div class="layout">
+    <div class="left">
+      <svg id="board" viewBox="0 0 480 420" role="img" aria-label="격자 시뮬레이터"></svg>
+      <div class="hud">
+        <span class="chip">이동(비용): <b id="cost">0</b></span>
+        <span class="chip">남은 먼지: <b id="left">0</b></span>
+        <span class="chip">기준 Cost′: <b id="ref">23</b></span>
+        <span class="chip">Step Up: <b id="score">—</b></span>
+      </div>
+      <div id="verdict" class="hud"></div>
+      <button id="reset">처음으로 (R)</button>
+    </div>
+
+    <div class="right">
+      <label>입력 데이터 (주어짐)</label>
+      <textarea id="inputBox" rows="9" readonly></textarea>
+      <label>출력 (시뮬레이션하면 자동 생성됨)</label>
+      <textarea id="outputBox" rows="4" readonly placeholder="방향키를 누르면 여기에 U/D/L/R 이 쌓입니다"></textarea>
+      <div class="keys">
+        <div><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 이동 &nbsp;·&nbsp; <kbd>z</kbd> 한 칸 되돌리기 &nbsp;·&nbsp; <kbd>r</kbd> 리셋</div>
+        <div>격자 밖으로 나가면 무효입니다. 모든 먼지를 밟으면 채점됩니다.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// The instance is seed 101 from problems/example_clean/problem.py (ref cost 23).
+// Parsed in JS exactly like the Python checker so behavior matches the grader.
+const INPUT = "7 8\n0 0\n....*...\n......**\n...*....\n........\n**.....*\n...*.*..\n........\n";
+// Step Up part is out of 1,000,000, split across given_seeds=[101,102,103]; this demo
+// shows mission 1, so its budget is floor(1,000,000/3). (Was a stale 200,000.)
+const REF = 23, BUDGET = 333333;
+const MOVES = { ArrowUp:[-1,0,'U'], ArrowDown:[1,0,'D'], ArrowLeft:[0,-1,'L'], ArrowRight:[0,1,'R'] };
+
+function parse(text){
+  const L = text.split("\n");
+  const [h,w] = L[0].split(" ").map(Number);
+  const [sr,sc] = L[1].split(" ").map(Number);
+  const dirty = new Set();
+  for (let r=0;r<h;r++){ const row=L[2+r]||""; for(let c=0;c<w;c++) if(row[c]==='*') dirty.add(r+","+c); }
+  return { h,w,start:[sr,sc],dirty };
+}
+
+const G = parse(INPUT);
+const CELL = 52, PAD = 8;
+let pos, visited, moves;
+
+function reset(){
+  pos = G.start.slice();
+  visited = new Set([pos.join(",")]);
+  moves = [];
+  render();
+}
+
+function tryMove(ev){
+  if (ev.key==='z' || ev.key==='Z'){ undo(); ev.preventDefault(); return; }
+  if (ev.key==='r' || ev.key==='R'){ reset(); ev.preventDefault(); return; }
+  const m = MOVES[ev.key]; if(!m) return;
+  ev.preventDefault();
+  const nr = pos[0]+m[0], nc = pos[1]+m[1];
+  if (nr<0||nr>=G.h||nc<0||nc>=G.w){ flash(); return; }   // off-grid = illegal, ignored
+  pos = [nr,nc]; moves.push(m[2]); visited.add(pos.join(","));
+  render();
+}
+
+function undo(){
+  if(!moves.length) return;
+  const last = moves.pop();
+  const inv = {U:[1,0],D:[-1,0],L:[0,1],R:[0,-1]}[last];
+  pos = [pos[0]+inv[0], pos[1]+inv[1]];
+  // recompute visited from scratch (cheap) so undo can re-dirty a cell
+  visited = new Set([G.start.join(",")]);
+  let p = G.start.slice();
+  for(const mv of moves){ const d={U:[-1,0],D:[1,0],L:[0,-1],R:[0,1]}[mv]; p=[p[0]+d[0],p[1]+d[1]]; visited.add(p.join(",")); }
+  render();
+}
+
+let flashUntil = 0;
+function flash(){ flashUntil = Date.now()+200; render(); }
+
+function render(){
+  const svg = document.getElementById('board');
+  const W = G.w*CELL+PAD*2, H = G.h*CELL+PAD*2;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  let s = "";
+  for(let r=0;r<G.h;r++) for(let c=0;c<G.w;c++){
+    const x=PAD+c*CELL, y=PAD+r*CELL, key=r+","+c;
+    s += `<rect x="${x}" y="${y}" width="${CELL-3}" height="${CELL-3}" rx="7" fill="#161a23" stroke="#222838"/>`;
+    if (G.dirty.has(key)){
+      const cleaned = visited.has(key);
+      s += `<circle cx="${x+(CELL-3)/2}" cy="${y+(CELL-3)/2}" r="8" fill="${cleaned?'var(--clean)':'var(--dirty)'}"/>`;
+    }
+  }
+  const rx=PAD+pos[1]*CELL, ry=PAD+pos[0]*CELL;
+  const robotColor = Date.now()<flashUntil ? '#ff5d5d' : 'var(--robot)';
+  s += `<rect x="${rx+6}" y="${ry+6}" width="${CELL-15}" height="${CELL-15}" rx="6" fill="${robotColor}"/>`;
+  svg.innerHTML = s;
+
+  document.getElementById('inputBox').value = INPUT.trimEnd();
+  document.getElementById('outputBox').value = moves.join("");
+  document.getElementById('cost').textContent = moves.length;
+  const remaining = [...G.dirty].filter(k=>!visited.has(k)).length;
+  document.getElementById('left').textContent = remaining;
+
+  const v = document.getElementById('verdict');
+  if (remaining===0){
+    const cost = moves.length;
+    const ratio = Math.min(REF/cost, 1);
+    const score = Math.floor(BUDGET*ratio);
+    document.getElementById('score').textContent = score.toLocaleString();
+    const full = cost<=REF;
+    v.innerHTML = `<span class="chip ${full?'ok':''}">${full?'✓ 만점!':'부분점수'} · 내 비용 ${cost} vs 기준 ${REF} · 비율 ${ratio.toFixed(3)}</span>`;
+  } else {
+    document.getElementById('score').textContent = '—';
+    v.innerHTML = `<span class="chip">먼지 ${remaining}개 남음 — 다 밟으면 채점됩니다</span>`;
+  }
+  if (flashUntil>Date.now()) setTimeout(render, 210);
+}
+
+document.getElementById('ref').textContent = REF;
+document.getElementById('reset').addEventListener('click', reset);
+window.addEventListener('keydown', tryMove);
+reset();
+</script>
+</body>
+</html>

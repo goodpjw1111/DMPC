@@ -1,0 +1,26 @@
+# Keep Render's FREE API instance awake (it spins down after ~15 min idle, costing a
+# ~50s cold start on the next request — bad during a contest). A tiny scheduled ping
+# every ~10 min keeps it warm. docs/DEPLOY.md §12.
+#
+# Set a repo VARIABLE (Settings -> Secrets and variables -> Actions -> Variables):
+#   API_HEALTH_URL = https://<your-app>.vercel.app/healthz   (or the onrender.com /healthz)
+
+name: keepalive
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Ping /healthz so the free instance stays warm
+        run: |
+          url="${{ vars.API_HEALTH_URL }}"
+          if [ -z "$url" ]; then echo "API_HEALTH_URL not set — skipping"; exit 0; fi
+          curl -fsS --max-time 40 "$url" && echo "  pinged $url" || echo "  ping failed (instance may be waking)"

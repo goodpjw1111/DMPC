@@ -1,0 +1,29 @@
+# DMPC single-origin reverse proxy (free-tier deploy — see docs/GRADING_ENV.md §2,
+# docs/DEPLOY.md §8). Caddy serves the Next.js frontend and proxies /api, /auth,
+# /healthz to the FastAPI API on the SAME origin, so cookies are first-party
+# (SameSite=Lax + __Host- keep working, no CORS). Caddy gets automatic HTTPS.
+#
+# Replace the site address with your free DuckDNS subdomain. Run on the app VM
+# (Oracle Always Free); the grader worker lives on a SEPARATE VM.
+#
+#   sudo caddy run --config /etc/caddy/Caddyfile
+
+your-name.duckdns.org {
+    encode zstd gzip
+
+    # API (no secrets reach the browser; the FastAPI tier holds them)
+    handle /api/*    { reverse_proxy 127.0.0.1:8000 }
+    handle /auth/*   { reverse_proxy 127.0.0.1:8000 }
+    handle /healthz  { reverse_proxy 127.0.0.1:8000 }
+
+    # everything else -> Next.js
+    handle           { reverse_proxy 127.0.0.1:3000 }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+# Local HTTP testing (no TLS): use `:8080` instead of the domain above.

@@ -1,0 +1,37 @@
+# Render Blueprint — deploys the FastAPI tier on Render's FREE plan (no credit card).
+# docs/DEPLOY.md §12 (the Vercel + Render + Neon + GitHub Actions, card-free path).
+#
+# Render dashboard -> New -> Blueprint -> pick this repo. Fill the `sync: false` vars
+# (secrets + your URLs) in the dashboard. The DB is Neon (external) — paste its
+# connection string into DATABASE_URL.
+#
+# Single-origin: the browser only ever talks to your Vercel domain; Vercel proxies
+# /api and /auth to THIS service (next.config rewrites), so cookies stay first-party
+# (SameSite=Lax + __Host- work). Hence WEB_ORIGIN / API_BASE_URL / GOOGLE_REDIRECT_URI
+# are all your VERCEL URL, not the onrender.com URL.
+services:
+  - type: web
+    name: dmpc-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: .                 # repo root — image needs judge/ + problems/
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - { key: APP_ENV,             value: prod }
+      - { key: COOKIE_SECURE,       value: "true" }
+      - { key: COOKIE_SAMESITE,     value: lax }          # single-origin via Vercel proxy
+      - { key: CSP_REPORT_ONLY,     value: "false" }
+      - { key: ALLOWED_EMAIL_DOMAIN, value: dimigo.hs.kr }
+      - { key: ALLOW_EMAILS,        value: goodpjw1111@gmail.com }
+      - { key: ADMIN_EMAILS,        value: "goodpjw2008@dimigo.hs.kr,goodpjw1111@gmail.com" }
+      # --- fill these in the dashboard (secrets / your URLs) -------------------
+      - { key: DATABASE_URL,        sync: false }   # Neon connection string (?sslmode=require)
+      - { key: SECRET_KEY,          sync: false }   # python -c "import secrets;print(secrets.token_urlsafe(48))"
+      - { key: EVAL_SEED_SECRET,    sync: false }   # another token_urlsafe(48)
+      - { key: GOOGLE_CLIENT_ID,    sync: false }
+      - { key: GOOGLE_CLIENT_SECRET, sync: false }
+      - { key: WEB_ORIGIN,          sync: false }   # https://<your-app>.vercel.app
+      - { key: API_BASE_URL,        sync: false }   # https://<your-app>.vercel.app
+      - { key: GOOGLE_REDIRECT_URI, sync: false }   # https://<your-app>.vercel.app/auth/callback
