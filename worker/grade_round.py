@@ -101,6 +101,13 @@ def _challenge_config(scoring_config: dict) -> tuple[int, int, int, float]:
     return lo, hi, k, eps
 
 
+def _challenge_subtasks(scoring_config: dict):
+    """Author-defined Challenge subtasks `[{name, gen_params, num_seeds, budget}]`, or
+    None for the legacy single-pool path. Each subtask is its own relative field + budget."""
+    subs = (scoring_config or {}).get("challenge_subtasks")
+    return subs if subs else None
+
+
 def _grade_rep_default(problem_key: str, language_id: str, source: str,
                        seeds: list[int], limits: Limits, data_bin: bytes | None = None,
                        gen_params: dict | None = None):
@@ -122,13 +129,32 @@ def _grade_rep_with_retry(grade_rep, *args):
     raise last if last else IsolateInternalError("rep grading failed")
 
 
+def _append_rep_cases(case_raws, pid, rep, sid, seeds, outcomes, compiled_ok):
+    """Append one rep's per-seed CaseRaws (compile-fail -> CE on every seed)."""
+    if not compiled_ok:
+        for s in seeds:
+            case_raws.append(CaseRaw(pid, str(rep["user_id"]), sid, s, None, "CE"))
+        return
+    for o in outcomes:
+        case_raws.append(CaseRaw(pid, str(rep["user_id"]), sid, o.seed, o.cost,
+                                 o.verdict, runtime_ms=o.runtime_ms))
+
+
 async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
-    """Run every rep of every Challenge problem over its hidden seeds.
-    Returns (case_raws, seeds_by_problem, eps_by_problem). Raises on infra/config."""
+    """Run every rep of every Challenge problem over its hidden seeds. Returns
+    (case_raws, seeds_by_problem, eps_by_problem, subtasks_by_problem). Raises on infra/config.
+
+    Author-defined subtasks: derive ALL seeds for the problem ONCE then PARTITION them
+    in order into subtasks — distinct seeds (no cross-subtask collision) with a
+    deterministic, recomputable seed->subtask membership — and run each partition with
+    its own feature ranges (gen_params). Each subtask is scored as its own relative field."""
     case_raws: list[CaseRaw] = []
     seeds_by_problem: dict[str, list[int]] = {}
     eps_by_problem: dict[str, float] = {}
+    subtasks_by_problem: dict[str, list[dict]] = {}
     scheduled_at = round_row["scheduled_at"]
+    if not secret:
+        raise RoundConfigError("EVAL_SEED_SECRET is required to grade a Challenge round")
 
     for p in problems:
         if p["kind"] != "challenge":
@@ -136,9 +162,39 @@ async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
         pid = str(p["id"])
         cfg = _as_dict(p["scoring_config"])
         lo, hi, k, eps = _challenge_config(cfg)
+        subs = _challenge_subtasks(cfg)
+        base = Limits(time_ms=p["time_limit_ms"], memory_mb=p["memory_limit_mb"])
+        reps = await conn.fetch(REPS_SQL, p["id"], scheduled_at)
+
+        if subs:
+            total_k = sum(int(st["num_seeds"]) for st in subs)
+            all_seeds = derive_seeds(secret, round_row["idem_key"], p["problem_key"], total_k, lo, hi)
+            if len(all_seeds) < total_k:
+                raise RoundConfigError(
+                    f"seed_range [{lo},{hi}] too small for {total_k} distinct subtask seeds"
+                )
+            groups, idx = [], 0
+            for st in subs:
+                n = int(st["num_seeds"])
+                groups.append({"seeds": all_seeds[idx:idx + n], "budget": int(st["budget"]),
+                               "eps": float(st.get("cost_eps", eps)), "gen_params": st.get("gen_params")})
+                idx += n
+            seeds_by_problem[pid] = all_seeds
+            subtasks_by_problem[pid] = [{"seeds": g["seeds"], "budget": g["budget"], "eps": g["eps"]} for g in groups]
+            for rep in reps:
+                sid = str(rep["id"])
+                for g in groups:
+                    # one compile+run per subtask (each has its own feature ranges) —
+                    # correct over efficient; a handful of subtasks per problem is fine.
+                    outcomes, compiled_ok, _log = await asyncio.to_thread(
+                        _grade_rep_with_retry, grade_rep, p["problem_key"],
+                        rep["language_id"], rep["source_text"], g["seeds"], base, rep["data_bin"], g["gen_params"],
+                    )
+                    _append_rep_cases(case_raws, pid, rep, sid, g["seeds"], outcomes, compiled_ok)
+            continue
+
+        # ---- legacy single-pool path ----
         gen_params = cfg.get("gen_params")        # parametric (authored) problems
-        if not secret:
-            raise RoundConfigError("EVAL_SEED_SECRET is required to grade a Challenge round")
         seeds = derive_seeds(secret, round_row["idem_key"], p["problem_key"], k, lo, hi)
         if len(seeds) < k:
             raise RoundConfigError(
@@ -146,9 +202,6 @@ async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
             )
         seeds_by_problem[pid] = seeds
         eps_by_problem[pid] = eps
-
-        base = Limits(time_ms=p["time_limit_ms"], memory_mb=p["memory_limit_mb"])
-        reps = await conn.fetch(REPS_SQL, p["id"], scheduled_at)
         for rep in reps:
             sid = str(rep["id"])
             # offload the blocking isolate compile+run so the event loop (scheduler)
@@ -157,18 +210,8 @@ async def _challenge_case_raws(conn, round_row, problems, *, grade_rep, secret):
                 _grade_rep_with_retry, grade_rep, p["problem_key"],
                 rep["language_id"], rep["source_text"], seeds, base, rep["data_bin"], gen_params,
             )
-            if not compiled_ok:
-                # compile failed -> invalid on every seed (a real, contained loss).
-                for s in seeds:
-                    case_raws.append(CaseRaw(pid, str(rep["user_id"]), sid, s,
-                                             None, "CE"))
-                continue
-            for o in outcomes:
-                case_raws.append(CaseRaw(
-                    pid, str(rep["user_id"]), sid, o.seed, o.cost, o.verdict,
-                    runtime_ms=o.runtime_ms,
-                ))
-    return case_raws, seeds_by_problem, eps_by_problem
+            _append_rep_cases(case_raws, pid, rep, sid, seeds, outcomes, compiled_ok)
+    return case_raws, seeds_by_problem, eps_by_problem, subtasks_by_problem
 
 
 async def _stepup_by_user(conn, round_row, problems) -> dict[str, int]:
@@ -238,7 +281,7 @@ async def evaluate_round(conn, round_id: str, *, grade_rep=_grade_rep_default,
         )
 
         # ---- sandbox phase (NO open DB transaction across isolate) ----
-        case_raws, seeds_by_problem, eps_by_problem = await _challenge_case_raws(
+        case_raws, seeds_by_problem, eps_by_problem, subtasks_by_problem = await _challenge_case_raws(
             conn, rnd, problems, grade_rep=grade_rep, secret=secret
         )
         stepup = await _stepup_by_user(conn, rnd, problems)
@@ -248,7 +291,8 @@ async def evaluate_round(conn, round_id: str, *, grade_rep=_grade_rep_default,
         )
         budget = int(contest["challenge_budget"]) if contest else 1000000
         result = score_round(case_raws, seeds_by_problem, stepup,
-                             challenge_budget=budget, eps_by_problem=eps_by_problem)
+                             challenge_budget=budget, eps_by_problem=eps_by_problem,
+                             subtasks_by_problem=subtasks_by_problem)
         is_final = rnd["type"] == "final"
 
         # ---- single write transaction: replace this round's rows atomically ----

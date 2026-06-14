@@ -151,7 +151,7 @@ export type CreateContestPayload = {
   start_now?: boolean;
   gen_params: GenParamsPayload;
   stepup: { statement_md: string; given_seeds?: number[]; missions?: { seed: number; score: number; features: Record<string, number> }[]; time_limit_ms: number; memory_limit_mb: number };
-  challenge: { statement_md: string; seed_range: [number, number]; round_seeds: number; cost_eps: number; time_limit_ms: number; memory_limit_mb: number };
+  challenge: { statement_md: string; seed_range: [number, number]; round_seeds: number; cost_eps: number; subtasks?: { name: string; gen_params: GenParamsPayload; num_seeds: number; budget: number }[]; time_limit_ms: number; memory_limit_mb: number };
 };
 export const createContest = (payload: CreateContestPayload) =>
   apiPost<{ id: string; status: string; starts_at: string; ends_at: string }>("/api/admin/contests", payload);

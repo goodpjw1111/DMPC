@@ -84,11 +84,19 @@ class StepUpSpec(BaseModel):
     memory_limit_mb: int = Field(default=1024, ge=64, le=4096)
 
 
+class ChallengeSubtaskSpec(BaseModel):
+    name: str = Field(default="", max_length=60)
+    gen_params: GenParams = Field(default_factory=GenParams)   # feature RANGES for this subtask
+    num_seeds: int = Field(default=4, ge=1, le=100)
+    budget: int = Field(ge=0, le=STEPUP_BUDGET)
+
+
 class ChallengeSpec(BaseModel):
     statement_md: str = Field(default="", max_length=MAX_STATEMENT)
     seed_range: list[int]            # [lo, hi]
     round_seeds: int = Field(default=6, ge=1, le=100)
     cost_eps: float = Field(default=0.0, ge=0)
+    subtasks: list[ChallengeSubtaskSpec] = []    # condition-based subtasks (each its own field + budget)
     time_limit_ms: int = Field(default=2000, ge=100, le=10_000)
     memory_limit_mb: int = Field(default=1024, ge=64, le=4096)
 
@@ -129,11 +137,27 @@ def validate_create(body: CreateContestIn) -> None:
     rng = body.challenge.seed_range
     if len(rng) != 2 or not (0 <= rng[0] <= rng[1] <= 10_000_000):
         raise HTTPException(400, "챌린지 시드 범위는 [lo, hi] (0 ≤ lo ≤ hi ≤ 1천만) 여야 합니다")
-    # the eval picks `round_seeds` DISTINCT seeds from [lo,hi]; if the range is too small
-    # the round would fail at eval time (grade_round RoundConfigError). Reject at creation.
-    if (rng[1] - rng[0] + 1) < body.challenge.round_seeds:
-        raise HTTPException(400, f"시드 범위 [{rng[0]},{rng[1]}]에서 서로 다른 {body.challenge.round_seeds}개 "
-                                 "시드를 뽑을 수 없습니다 (범위를 넓히거나 라운드 케이스 수를 줄이세요)")
+    cst = body.challenge.subtasks
+    if cst:
+        if sum(s.budget for s in cst) != STEPUP_BUDGET:
+            raise HTTPException(400, f"챌린지 서브태스크 배점 합이 정확히 {STEPUP_BUDGET:,}이어야 합니다 "
+                                     f"(현재 {sum(s.budget for s in cst):,})")
+        total_k = sum(s.num_seeds for s in cst)
+        if (rng[1] - rng[0] + 1) < total_k:
+            raise HTTPException(400, f"시드 범위 [{rng[0]},{rng[1]}]에서 서브태스크 시드 총 {total_k}개를 "
+                                     "뽑을 수 없습니다 (범위를 넓히거나 시드 수를 줄이세요)")
+        for s in cst:
+            g = s.gen_params
+            if not (GRID_MIN <= g.hMin <= g.hMax <= GRID_MAX and GRID_MIN <= g.wMin <= g.wMax <= GRID_MAX):
+                raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 격자 범위는 {GRID_MIN}~{GRID_MAX}, 최소 ≤ 최대여야 합니다")
+            if not (0 <= g.dMin <= g.dMax) or g.dMax >= g.hMax * g.wMax:
+                raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 먼지 범위가 올바르지 않습니다 (0 ≤ 최소 ≤ 최대 < 칸 수)")
+    else:
+        # the eval picks `round_seeds` DISTINCT seeds from [lo,hi]; if the range is too small
+        # the round would fail at eval time (grade_round RoundConfigError). Reject at creation.
+        if (rng[1] - rng[0] + 1) < body.challenge.round_seeds:
+            raise HTTPException(400, f"시드 범위 [{rng[0]},{rng[1]}]에서 서로 다른 {body.challenge.round_seeds}개 "
+                                     "시드를 뽑을 수 없습니다 (범위를 넓히거나 라운드 케이스 수를 줄이세요)")
     # grid/dust bounds only apply to parametric grid-family templates (those whose META
     # declares gen_params); other problems ignore body.gen_params, so don't gate on it.
     if "gen_params" in meta:
@@ -160,9 +184,20 @@ def problem_configs(body: CreateContestIn) -> tuple[dict, dict]:
         }
     else:
         su = {"given_seeds": list(body.stepup.given_seeds), "stepup_budget": STEPUP_BUDGET, "gen_params": gp}
-    ch = {"seed_range": [body.challenge.seed_range[0], body.challenge.seed_range[1]],
-          "round_seeds": body.challenge.round_seeds, "cost_eps": body.challenge.cost_eps,
-          "gen_params": gp}
+    if body.challenge.subtasks:
+        ch = {
+            "seed_range": [body.challenge.seed_range[0], body.challenge.seed_range[1]],
+            "cost_eps": body.challenge.cost_eps,
+            "challenge_subtasks": [
+                {"name": s.name, "gen_params": s.gen_params.model_dump(),
+                 "num_seeds": s.num_seeds, "budget": s.budget}
+                for s in body.challenge.subtasks
+            ],
+        }
+    else:
+        ch = {"seed_range": [body.challenge.seed_range[0], body.challenge.seed_range[1]],
+              "round_seeds": body.challenge.round_seeds, "cost_eps": body.challenge.cost_eps,
+              "gen_params": gp}
     return su, ch
 
 

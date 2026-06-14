@@ -1097,6 +1097,8 @@ export function CreateContestView() {
   const [problemKey, setProblemKey] = useState("clean_robot");
   const [startNow, setStartNow] = useState(false);
   const [missions, setMissions] = useState<StepCase[]>([]);   // Step Up: per-case features + scores
+  const [useSubtasks, setUseSubtasks] = useState(false);      // Challenge: condition-based subtasks
+  const [chSubtasks, setChSubtasks] = useState<{ name: string; gen: GenParams; numSeeds: number; budget: number }[]>([]);
   const [genLang, setGenLang] = useState("python3");
   const [genCode, setGenCode] = useState(GEN_CODE_DEFAULT);
   const [checkCode, setCheckCode] = useState(CHECK_CODE_DEFAULT);
@@ -1138,6 +1140,11 @@ export function CreateContestView() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiMode, schemaKeys]);
+  // seed one default Challenge subtask the first time the toggle is turned on.
+  useEffect(() => {
+    if (useSubtasks && chSubtasks.length === 0) setChSubtasks([{ name: "조건 1", gen: { ...DEFAULT_GEN }, numSeeds: 4, budget: 1_000_000 }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useSubtasks]);
 
   const rawSeedCount = seedsText.split(/[\s,]+/).filter((t) => t.trim().length).length;
   const seeds = Array.from(new Set(seedsText.split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)));
@@ -1151,8 +1158,14 @@ export function CreateContestView() {
   const seedDup = new Set(missions.map((m) => m.seed)).size !== missions.length;
   const featOk = missions.every((m) => featSchema.every((f) => { const v = m.features[f.key]; return Number.isFinite(v) && v >= f.min && v <= f.max; }));
   const missionsOk = missions.length >= 1 && scoreSum === 1_000_000 && featOk && !seedDup;
+  // Challenge: optional condition-based subtasks (each its own field + budget; budgets sum to 1e6).
+  const useSubs = apiMode && useSubtasks;
+  const chBudgetSum = chSubtasks.reduce((a, s) => a + (Number(s.budget) || 0), 0);
+  const chTotalSeeds = chSubtasks.reduce((a, s) => a + (Number(s.numSeeds) || 0), 0);
+  const chGensOk = chSubtasks.every((s) => s.gen.hMin <= s.gen.hMax && s.gen.wMin <= s.gen.wMax && s.gen.dMin <= s.gen.dMax && s.gen.hMin >= 2 && s.gen.wMin >= 2 && s.gen.dMin >= 0);
+  const chSubsOk = chSubtasks.length >= 1 && chBudgetSum === 1_000_000 && chGensOk && (seedHi - seedLo + 1) >= chTotalSeeds;
   const stepOk = genType === "code" ? (genCode.trim().length > 0 && !codeHasTodo) : (useMissions ? missionsOk : genOk);
-  const valid = title.trim().length > 0 && (useMissions || seeds.length >= 1) && stepOk && seedLo <= seedHi && roundSeeds >= 1;
+  const valid = title.trim().length > 0 && (useMissions || seeds.length >= 1) && stepOk && seedLo <= seedHi && (useSubs ? chSubsOk : roundSeeds >= 1);
   // first failing reason, so the disabled-button hint is specific (not a catch-all)
   const reason = !title.trim() ? "대회 제목을 입력하세요."
     : useMissions && missions.length < 1 ? "스텝업 케이스를 1개 이상 추가하세요."
@@ -1164,7 +1177,10 @@ export function CreateContestView() {
     : genType === "code" && codeHasTodo ? "생성기/체커 코드의 TODO를 채우세요."
     : genType === "code" && !genCode.trim() ? "생성기 코드를 입력하세요."
     : seedLo > seedHi ? "챌린지 시드 범위가 거꾸로입니다 (시작 ≤ 끝)."
-    : roundSeeds < 1 ? "평가 라운드당 케이스 수는 1 이상이어야 합니다."
+    : useSubs && chBudgetSum !== 1_000_000 ? `챌린지 서브태스크 배점 합이 1,000,000이어야 합니다 (현재 ${chBudgetSum.toLocaleString()}).`
+    : useSubs && !chGensOk ? "서브태스크 격자/먼지 범위를 확인하세요 (H·W ≥ 2, 최소 ≤ 최대)."
+    : useSubs && (seedHi - seedLo + 1) < chTotalSeeds ? `시드 범위가 서브태스크 시드 총 ${chTotalSeeds}개보다 작습니다.`
+    : !useSubs && roundSeeds < 1 ? "평가 라운드당 케이스 수는 1 이상이어야 합니다."
     : "";
 
   function attachImage(file: File, set: (fn: (s: string) => string) => void) {
@@ -1189,7 +1205,10 @@ export function CreateContestView() {
           stepup: useMissions
             ? { statement_md: statement, missions, time_limit_ms: timeMs, memory_limit_mb: memMb }
             : { statement_md: statement, given_seeds: seeds, time_limit_ms: timeMs, memory_limit_mb: memMb },
-          challenge: { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
+          challenge: useSubs
+            ? { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb,
+                subtasks: chSubtasks.map((s) => ({ name: s.name, gen_params: { hMin: s.gen.hMin, hMax: s.gen.hMax, wMin: s.gen.wMin, wMax: s.gen.wMax, dMin: s.gen.dMin, dMax: s.gen.dMax }, num_seeds: s.numSeeds, budget: s.budget })) }
+            : { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
         });
         showToast(`'${title.trim()}' 모의고사를 만들었습니다`, r.status === "live" ? "지금 바로 진행 중(테스트) — 제출 가능" : `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
         router.push(`/c/${r.id}`);
@@ -1228,6 +1247,11 @@ export function CreateContestView() {
   });
   const hasCleanGrid = featSchema.some((f) => f.key === "h") && featSchema.some((f) => f.key === "w");
   const featuresToGen = (f: Record<string, number>): GenParams => ({ hMin: f.h ?? 8, hMax: f.h ?? 8, wMin: f.w ?? 8, wMax: f.w ?? 8, dMin: f.dust ?? 0, dMax: f.dust ?? 0 });
+  // Challenge subtask-table helpers.
+  const setSub = (i: number, patch: Partial<{ name: string; numSeeds: number; budget: number }>) => setChSubtasks((s) => s.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const setSubGen = (i: number, patch: Partial<GenParams>) => setChSubtasks((s) => s.map((x, j) => (j === i ? { ...x, gen: { ...x.gen, ...patch } } : x)));
+  const addSub = () => setChSubtasks((s) => [...s, { name: `조건 ${s.length + 1}`, gen: { ...DEFAULT_GEN }, numSeeds: 4, budget: 0 }]);
+  const distSub = () => setChSubtasks((s) => { const n = s.length || 1, base = Math.floor(1_000_000 / n); return s.map((x, i) => ({ ...x, budget: i === 0 ? 1_000_000 - base * (n - 1) : base })); });
   const imgBtn = (set: (fn: (s: string) => string) => void) => (
     <label className="btn ghost" style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer", display: "inline-block" }}>🖼 이미지 첨부
       <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) attachImage(f, set); e.currentTarget.value = ""; }} /></label>
@@ -1335,10 +1359,49 @@ export function CreateContestView() {
     <div className="card" style={{ marginBottom: 16 }}>
       {field(<>지문 (마크다운/LaTeX) {imgBtn(setChStatement)}</>, <textarea rows={5} value={chStatement} onChange={(e) => setChStatement(e.target.value)} />)}
       {field("시드 범위 (무작위 케이스 생성)", <div className="row" style={{ gap: 12, fontSize: 13, flexWrap: "wrap" }}><span>{num(seedLo, setSeedLo, 90)} ~ {num(seedHi, setSeedHi, 90)}</span><span className="muted">평가마다 이 범위에서 무작위 추출 · 상대 등수 채점</span></div>)}
-      <div className="row" style={{ gap: 20, flexWrap: "wrap" }}>
+      {apiMode && <label className="row" style={{ gap: 8, alignItems: "center", marginBottom: 12, cursor: "pointer", fontSize: 13 }}>
+        <input type="checkbox" checked={useSubtasks} onChange={(e) => setUseSubtasks(e.target.checked)} />
+        <span><b>조건별 서브태스크로 분할</b> — 조건(피처 범위)별로 나눠 각각 상대 등수 채점 후 배점 합산 (배점 합 = 1,000,000)</span>
+      </label>}
+      {useSubs ? <>
+        {field(<>서브태스크 <span className="muted">— 조건(격자/먼지 범위)·시드 수·배점 · 시드는 위 범위에서 조건별로 따로 추출</span></>,
+          <div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>이름</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>행 H</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>열 W</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>먼지</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>시드 수</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>배점</th>
+                  <th></th>
+                </tr></thead>
+                <tbody>
+                  {chSubtasks.map((s, i) => <tr key={i}>
+                    <td style={{ padding: "3px 6px" }}><input value={s.name} onChange={(e) => setSub(i, { name: e.target.value })} style={{ width: 92, ...numCss }} /></td>
+                    <td style={{ padding: "3px 6px", whiteSpace: "nowrap" }}>{num(s.gen.hMin, (n) => setSubGen(i, { hMin: n }), 46)}~{num(s.gen.hMax, (n) => setSubGen(i, { hMax: n }), 46)}</td>
+                    <td style={{ padding: "3px 6px", whiteSpace: "nowrap" }}>{num(s.gen.wMin, (n) => setSubGen(i, { wMin: n }), 46)}~{num(s.gen.wMax, (n) => setSubGen(i, { wMax: n }), 46)}</td>
+                    <td style={{ padding: "3px 6px", whiteSpace: "nowrap" }}>{num(s.gen.dMin, (n) => setSubGen(i, { dMin: n }), 46)}~{num(s.gen.dMax, (n) => setSubGen(i, { dMax: n }), 46)}</td>
+                    <td style={{ padding: "3px 6px" }}>{num(s.numSeeds, (n) => setSub(i, { numSeeds: n }), 56)}</td>
+                    <td style={{ padding: "3px 6px" }}>{num(s.budget, (n) => setSub(i, { budget: n }), 96)}</td>
+                    <td style={{ padding: "3px 6px" }}><button className="btn ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setChSubtasks((cs) => cs.filter((_, j) => j !== i))} disabled={chSubtasks.length <= 1}>✕</button></td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+            <div className="row" style={{ gap: 10, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12 }} onClick={addSub}>+ 서브태스크 추가</button>
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12 }} onClick={distSub}>배점 균등분배</button>
+              <span style={{ fontSize: 12, color: chBudgetSum === 1_000_000 ? "var(--green)" : "var(--bad)" }}>배점 합 <b>{chBudgetSum.toLocaleString()}</b> / 1,000,000</span>
+              <span className="muted" style={{ fontSize: 12 }}>· 시드 총 {chTotalSeeds}개</span>
+            </div>
+          </div>)}
+        {field(<>비용 동점 허용오차 <span className="muted">(cost_eps)</span></>, <div>{numF(costEps, setCostEps, 90)}<div className="muted" style={{ fontSize: 11, marginTop: 4 }}>비용 차가 이 값 이하면 동점. 정수 비용이면 0.</div></div>)}
+      </> : <div className="row" style={{ gap: 20, flexWrap: "wrap" }}>
         {field(<>평가 라운드당 케이스 수 <span className="muted">(round_seeds)</span></>, <div>{num(roundSeeds, setRoundSeeds, 90)}<div className="muted" style={{ fontSize: 11, marginTop: 4 }}>매 평가(09·18시)마다 추출할 케이스 수 (예: 6)</div></div>)}
         {field(<>비용 동점 허용오차 <span className="muted">(cost_eps)</span></>, <div>{numF(costEps, setCostEps, 90)}<div className="muted" style={{ fontSize: 11, marginTop: 4 }}>비용 차가 이 값 이하면 동점. 정수 비용이면 0.</div></div>)}
-      </div>
+      </div>}
       <div style={{ background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 12, fontSize: 12, lineHeight: 1.75, color: "var(--muted)" }}>
         <b style={{ color: "var(--fg)" }}>제출·입출력 (모든 챌린지 공통, 자동 적용)</b><br />
         · 제출 소스 ≤ <b>1&nbsp;MB</b> · 추가 데이터 <code>data.bin</code> ≤ <b>10&nbsp;MB</b>(선택) · 입력=표준입력, 출력=표준출력, <code>data.bin</code>은 파일 입출력.<br />

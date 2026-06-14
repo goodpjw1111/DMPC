@@ -77,6 +77,24 @@ def _raw_by_problem(
     return out
 
 
+def _score_seed_group(users_raw, seeds, budget, eps, pid,
+                      challenge_by_user, score_at, rank_at) -> None:
+    """Score ONE relative field (a problem's flat seed list, or a subtask's seed pool):
+    add each user's relative total (mean per-case score rescaled to `budget`) and record
+    the per-(user,seed) relative score + rank. Pure aggregation into the passed dicts."""
+    per_user = compute_challenge_scores(users_raw, seeds, budget=budget, eps=eps)
+    for u, v in per_user.items():
+        challenge_by_user[u] = challenge_by_user.get(u, 0) + v
+    for seed in seeds:
+        all_costs = [users_raw[u].get(seed) for u in users_raw]
+        ranks = per_case_ranks(users_raw, seed, eps=eps)
+        for u in users_raw:
+            score_at[(pid, u, seed)] = scoring.challenge_case_score(
+                users_raw[u].get(seed), all_costs, eps=eps
+            )
+            rank_at[(pid, u, seed)] = ranks[u]
+
+
 def score_round(
     case_raws: list[CaseRaw],
     seeds_by_problem: dict[str, list[int]],
@@ -84,6 +102,7 @@ def score_round(
     *,
     challenge_budget: int = scoring.CHALLENGE_BUDGET,
     eps_by_problem: dict[str, float] | None = None,
+    subtasks_by_problem: dict[str, list[dict]] | None = None,
 ) -> RoundResult:
     """Assemble a round's Challenge case rows + combined standings.
 
@@ -93,8 +112,14 @@ def score_round(
                        all Step Up problems; absolute points). Users with only Step
                        Up still appear in standings via the union.
     `eps_by_problem`   optional per-problem cost tolerance (float-cost ties); 0.0 default.
+    `subtasks_by_problem` optional per-problem list of subtasks `[{seeds, budget, eps}]`.
+                       When set for a problem, that problem is scored PER SUBTASK
+                       (each its own relative field + budget) and the per-subtask
+                       scores are SUMMED — the subtask budgets sum to challenge_budget.
+                       Absent -> the flat (single-field) path (backward compatible).
     """
     eps_by_problem = eps_by_problem or {}
+    subtasks_by_problem = subtasks_by_problem or {}
     raw_by_problem = _raw_by_problem(case_raws)
 
     # Per-user Challenge total = sum over Challenge problems of that problem's relative score.
@@ -104,21 +129,16 @@ def score_round(
     rank_at: dict[tuple[str, str, int], int] = {}
 
     for pid, users_raw in raw_by_problem.items():
-        seeds = seeds_by_problem.get(pid, [])
-        eps = eps_by_problem.get(pid, scoring.DEFAULT_COST_EPS)
-
-        per_user = compute_challenge_scores(users_raw, seeds, budget=challenge_budget, eps=eps)
-        for u, v in per_user.items():
-            challenge_by_user[u] = challenge_by_user.get(u, 0) + v
-
-        for seed in seeds:
-            all_costs = [users_raw[u].get(seed) for u in users_raw]
-            ranks = per_case_ranks(users_raw, seed, eps=eps)
-            for u in users_raw:
-                score_at[(pid, u, seed)] = scoring.challenge_case_score(
-                    users_raw[u].get(seed), all_costs, eps=eps
-                )
-                rank_at[(pid, u, seed)] = ranks[u]
+        subs = subtasks_by_problem.get(pid)
+        if subs:
+            for st in subs:
+                _score_seed_group(users_raw, st["seeds"], int(st["budget"]),
+                                  float(st.get("eps", scoring.DEFAULT_COST_EPS)), pid,
+                                  challenge_by_user, score_at, rank_at)
+        else:
+            _score_seed_group(users_raw, seeds_by_problem.get(pid, []), challenge_budget,
+                              eps_by_problem.get(pid, scoring.DEFAULT_COST_EPS), pid,
+                              challenge_by_user, score_at, rank_at)
 
     cases = [
         CaseScored(
