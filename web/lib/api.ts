@@ -140,6 +140,8 @@ export const getNotifications = () => apiGet<ApiNotif[]>("/api/notifications");
 export const markNotificationsRead = () => apiPost<{ ok: boolean }>("/api/notifications/read");
 
 // ---- admin authoring ----
+export type ProblemTemplate = { problem_key: string; title: string; kind: string | null; simulator_key: string | null; parametric: boolean };
+export const getTemplates = () => apiGet<ProblemTemplate[]>("/api/admin/templates");
 export type GenParamsPayload = { hMin: number; hMax: number; wMin: number; wMax: number; dMin: number; dMax: number };
 export type CreateContestPayload = {
   title: string;

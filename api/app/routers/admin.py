@@ -22,19 +22,26 @@ from ..schedule import KST, contest_window
 
 # judge core (template whitelist comes from the installed problem modules)
 sys.path.insert(0, grading._JUDGE)
-from registry import list_problem_keys  # noqa: E402
+from registry import list_problem_keys, load_problem  # noqa: E402
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-# Built-in generator/checker modules an admin may build a contest on. `clean_robot`
-# is parametric (grid/dust ranges per contest); `example_clean` has fixed ranges.
-# (Running admin-authored generator CODE needs the sandbox — a separate, gated feature.)
-_ALLOWED_TEMPLATES = {"clean_robot", "example_clean"}
-
+# An admin may build a contest on ANY installed problem module (problems/<key>/problem.py,
+# auto-discovered by the registry). Each module's META carries its own simulator_key and,
+# if parametric, a gen_params block — so a NEW problem plugs in without editing this file.
+# (Running admin-authored generator CODE still needs the sandbox — a separate, gated feature.)
 MAX_STATEMENT = 100_000
 MAX_SEEDS = 50
 STEPUP_BUDGET = 1_000_000
 GRID_MIN, GRID_MAX = 2, 50           # authored grids stay playable in the in-browser sim
+
+
+def _template_meta(problem_key: str) -> dict:
+    """META of an installed problem template, or HTTP 400 if it isn't one. Pure (no DB):
+    load_problem only imports the filesystem module, so this stays unit-testable."""
+    if problem_key not in set(list_problem_keys()):
+        raise HTTPException(400, f"알 수 없는/사용 불가 문제 템플릿입니다: '{problem_key}'")
+    return dict(load_problem(problem_key).META)
 
 
 class GenParams(BaseModel):
@@ -73,8 +80,7 @@ class CreateContestIn(BaseModel):
 def validate_create(body: CreateContestIn) -> None:
     """Pure validation (no DB) — raises HTTPException(400) on a bad request.
     Factored out so it is unit-testable without a database."""
-    if body.problem_key not in _ALLOWED_TEMPLATES or body.problem_key not in set(list_problem_keys()):
-        raise HTTPException(400, f"알 수 없는/사용 불가 문제 템플릿입니다: '{body.problem_key}'")
+    meta = _template_meta(body.problem_key)
     seeds = body.stepup.given_seeds
     if not (1 <= len(seeds) <= MAX_SEEDS):
         raise HTTPException(400, f"스텝업 미션 시드는 1~{MAX_SEEDS}개여야 합니다")
@@ -90,11 +96,14 @@ def validate_create(body: CreateContestIn) -> None:
     if (rng[1] - rng[0] + 1) < body.challenge.round_seeds:
         raise HTTPException(400, f"시드 범위 [{rng[0]},{rng[1]}]에서 서로 다른 {body.challenge.round_seeds}개 "
                                  "시드를 뽑을 수 없습니다 (범위를 넓히거나 라운드 케이스 수를 줄이세요)")
-    g = body.gen_params
-    if not (GRID_MIN <= g.hMin <= g.hMax <= GRID_MAX and GRID_MIN <= g.wMin <= g.wMax <= GRID_MAX):
-        raise HTTPException(400, f"격자 범위는 {GRID_MIN}~{GRID_MAX}, 최소 ≤ 최대여야 합니다")
-    if not (0 <= g.dMin <= g.dMax) or g.dMax >= g.hMax * g.wMax:
-        raise HTTPException(400, "먼지 개수 범위가 올바르지 않습니다 (0 ≤ 최소 ≤ 최대 < 격자 칸 수)")
+    # grid/dust bounds only apply to parametric grid-family templates (those whose META
+    # declares gen_params); other problems ignore body.gen_params, so don't gate on it.
+    if "gen_params" in meta:
+        g = body.gen_params
+        if not (GRID_MIN <= g.hMin <= g.hMax <= GRID_MAX and GRID_MIN <= g.wMin <= g.wMax <= GRID_MAX):
+            raise HTTPException(400, f"격자 범위는 {GRID_MIN}~{GRID_MAX}, 최소 ≤ 최대여야 합니다")
+        if not (0 <= g.dMin <= g.dMax) or g.dMax >= g.hMax * g.wMax:
+            raise HTTPException(400, "먼지 개수 범위가 올바르지 않습니다 (0 ≤ 최소 ≤ 최대 < 격자 칸 수)")
 
 
 def problem_configs(body: CreateContestIn) -> tuple[dict, dict]:
@@ -108,16 +117,40 @@ def problem_configs(body: CreateContestIn) -> tuple[dict, dict]:
     return su, ch
 
 
+@router.get("/templates")
+async def list_templates(user: CurrentUser = Depends(require_admin)):
+    """Installed problem templates an admin can build a contest on (auto-discovered).
+    The authoring form picks problem_key from here; simulator_key tells the client which
+    in-browser simulator to render (null = no browser sim → submit directly)."""
+    out = []
+    for key in list_problem_keys():
+        try:
+            meta = load_problem(key).META
+        except Exception:                       # a broken module shouldn't hide the rest
+            continue
+        out.append({
+            "problem_key": key,
+            "title": meta.get("title", key),
+            "kind": meta.get("kind"),
+            "simulator_key": meta.get("simulator_key"),
+            "parametric": "gen_params" in meta,
+        })
+    return out
+
+
 @router.post("/contests")
 async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(require_admin)):
     validate_create(body)
+    # the client-side simulator comes from the problem module's META, not a hardcoded
+    # value — a new problem ships its own simulator_key (or null = no in-browser sim).
+    sim_key = _template_meta(body.problem_key).get("simulator_key")
     # dates follow the locked schedule rule: register today -> start D+1 09:00 KST, 3-day window.
     starts_at, ends_at = contest_window(datetime.now(KST).date())
     su_cfg, ch_cfg = problem_configs(body)
     insert_problem = (
         """INSERT INTO problems (contest_id, kind, problem_key, title, statement_md,
                time_limit_ms, memory_limit_mb, simulator_key, scoring_config)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'clean',$8::jsonb)"""
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)"""
     )
     async with db.pool().acquire() as conn:
         async with conn.transaction():
@@ -130,12 +163,12 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
             await conn.execute(
                 insert_problem, cid, "stepup", body.problem_key, f"{body.title} — 스텝 업",
                 body.stepup.statement_md, body.stepup.time_limit_ms, body.stepup.memory_limit_mb,
-                json.dumps(su_cfg),
+                sim_key, json.dumps(su_cfg),
             )
             await conn.execute(
                 insert_problem, cid, "challenge", body.problem_key, f"{body.title} — 챌린지",
                 body.challenge.statement_md, body.challenge.time_limit_ms, body.challenge.memory_limit_mb,
-                json.dumps(ch_cfg),
+                sim_key, json.dumps(ch_cfg),
             )
     return {"id": str(cid), "status": "scheduled",
             "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}

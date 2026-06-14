@@ -16,12 +16,13 @@ import {
   parseInst, parseMoves, boardState, referenceCost, gradeStep, genClean, DEFAULT_GEN,
   KEY_MOVES, type Inst, type GenParams,
 } from "@/lib/sim";
+import { registerSimulator, getSimulator } from "@/lib/simulators";
 import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, moderateReplay,
-  getRegistration, registerContest, unregisterContest,
-  type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval,
+  getRegistration, registerContest, unregisterContest, getTemplates,
+  type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
 } from "@/lib/api";
 
@@ -264,6 +265,11 @@ function ChallengeSimulator() {
     </div>
   </>;
 }
+
+// Register the clean-robot family simulator (grid + dust + robot). A problem whose
+// META.simulator_key === "clean" renders these. A NEW problem calls registerSimulator
+// with its own key + components; the dispatch site (ApiProblemView) needs no edits.
+registerSimulator("clean", { Step: StepSimulator, Challenge: ChallengeSimulator });
 
 // ===== problem view =====
 type RightTab = "submit" | "history" | "eval";
@@ -858,7 +864,11 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
 
   const statement = problem?.statement_md ?? "";
   const hasMissions = isStep && missions.length > 0;          // can submit an output
-  const simReady = hasMissions && simInputOk;                 // can ALSO run the in-browser sim
+  // pick THIS problem's in-browser simulator by its simulator_key. None registered →
+  // no sim tab; the user submits output/code directly (the server is always the judge).
+  const sim = getSimulator(problem?.simulator_key);
+  const SimStep = sim?.Step, SimCh = sim?.Challenge;
+  const simReady = isStep ? (hasMissions && simInputOk && !!SimStep) : !!SimCh;
   const rightTabs: [RightTab, string][] = isStep ? [["submit", "제출"], ["history", "제출 내역"]] : [["submit", "제출"], ["history", "제출 내역"], ["eval", "중간 평가"]];
   const curSeed = missions[mission]?.seed;
   const curBudget = missions[mission]?.budget ?? 0;
@@ -868,13 +878,15 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
       <div className="pane-head">
         <div className="tabs">
           <button className={"tab" + (leftTab === "statement" ? " active" : "")} onClick={() => setLeftTab("statement")}>문제</button>
-          <button className={"tab" + (leftTab === "sim" ? " active" : "")} disabled={isStep && !simReady} style={isStep && !simReady ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => { if (!(isStep && !simReady)) setLeftTab("sim"); }}>시뮬레이터</button>
+          <button className={"tab" + (leftTab === "sim" ? " active" : "")} disabled={!simReady} style={!simReady ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => { if (simReady) setLeftTab("sim"); }}>시뮬레이터</button>
         </div>
         <Link href={`/c/${c.id}`} className="btn ghost" style={{ padding: "6px 12px" }}>← 문제 목록</Link>
       </div>
       <div className="pane-body">
         {leftTab === "sim"
-          ? (isStep ? (simReady ? <StepSimulator mission={mission} setMission={setMission} onOutput={setStepOutput} missions={missions} initial={stepOutput} /> : <CustomGenNotice />) : <ChallengeSimulator />)
+          ? (isStep
+              ? (simReady && SimStep ? <SimStep mission={mission} setMission={setMission} onOutput={setStepOutput} missions={missions} initial={stepOutput} /> : <CustomGenNotice />)
+              : (SimCh ? <SimCh /> : <CustomGenNotice />))
           : (isStep ? (statement ? <MarkdownView md={statement} /> : <CustomGenNotice />) : <ChallengeStatement md={statement} />)}
       </div>
     </div>
@@ -1031,6 +1043,8 @@ export function CreateContestView() {
   const [memMb, setMemMb] = useState(1024);
   const [genType, setGenType] = useState<"param" | "code">("param");
   const [gen, setGen] = useState<GenParams>(DEFAULT_GEN);
+  const [templates, setTemplates] = useState<ProblemTemplate[] | null>(null);
+  const [problemKey, setProblemKey] = useState("clean_robot");
   const [genLang, setGenLang] = useState("python3");
   const [genCode, setGenCode] = useState(GEN_CODE_DEFAULT);
   const [checkCode, setCheckCode] = useState(CHECK_CODE_DEFAULT);
@@ -1040,6 +1054,20 @@ export function CreateContestView() {
   const [roundSeeds, setRoundSeeds] = useState(6);
   const [costEps, setCostEps] = useState(0);
   const [preview, setPreview] = useState(false);
+
+  // load the installed problem templates so the admin can build on ANY of them.
+  useEffect(() => {
+    if (!apiMode || !isAdmin) return;
+    let on = true;
+    getTemplates().then((t) => {
+      if (!on) return;
+      setTemplates(t);
+      // keep the selection valid even if the default key isn't installed (future problems).
+      if (t.length && !t.some((x) => x.problem_key === problemKey)) setProblemKey(t[0].problem_key);
+    }).catch(() => { if (on) setTemplates([]); });
+    return () => { on = false; };
+  }, [apiMode, isAdmin]);
+  const curTemplate = templates?.find((t) => t.problem_key === problemKey) ?? null;
 
   const rawSeedCount = seedsText.split(/[\s,]+/).filter((t) => t.trim().length).length;
   const seeds = Array.from(new Set(seedsText.split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)));
@@ -1075,7 +1103,7 @@ export function CreateContestView() {
       setCreating(true);
       try {
         const r = await createContest({
-          title: title.trim(), problem_key: "clean_robot",
+          title: title.trim(), problem_key: problemKey,
           gen_params: { hMin: gen.hMin, hMax: gen.hMax, wMin: gen.wMin, wMax: gen.wMax, dMin: gen.dMin, dMax: gen.dMax },
           stepup: { statement_md: statement, given_seeds: seeds, time_limit_ms: timeMs, memory_limit_mb: memMb },
           challenge: { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
@@ -1123,9 +1151,18 @@ export function CreateContestView() {
       (이 미리보기에서는 <b>즉시 진행</b> 데모로 생성됩니다.) 지문은 <b>마크다운 + LaTeX(<code>$..$</code>) + 이미지</b> 지원.</p>
     {apiMode && <div className="card" style={{ marginBottom: 16, borderColor: "var(--line2)" }}>
       <b>실 API 모드</b>
-      <p className="muted" style={{ margin: "6px 0 0", lineHeight: 1.6 }}>서버에 <b>예약 대회</b>로 저장됩니다(일정 규칙 적용). <b>청소로봇 파라미터 생성기</b>로 채점되며
-        <b>제목·지문·시드·격자/먼지 범위·시간/메모리·챌린지 시드범위/라운드/cost_eps</b>가 모두 반영됩니다(시뮬레이터·미리보기와 동일한 격자).
+      <p className="muted" style={{ margin: "6px 0 10px", lineHeight: 1.6 }}>서버에 <b>예약 대회</b>로 저장됩니다(일정 규칙 적용).
+        선택한 <b>문제 템플릿</b>의 생성기/체커로 채점되고, 템플릿이 선언한 <b>시뮬레이터</b>가 자동 연결됩니다.
         <b>커스텀 생성기 코드</b>는 샌드박스 채점이 필요해 아직 준비 중입니다.</p>
+      {field("문제 템플릿",
+        <select className="dd" value={problemKey} onChange={(e) => setProblemKey(e.target.value)} style={{ width: "100%" }}>
+          {(templates ?? [{ problem_key: "clean_robot", title: "청소 로봇 (파라미터)", kind: null, simulator_key: "clean", parametric: true }]).map((t) =>
+            <option key={t.problem_key} value={t.problem_key}>
+              {t.title} — {t.problem_key}{t.parametric ? " · 파라미터" : " · 고정범위"}{t.simulator_key ? "" : " · 시뮬레이터 없음"}
+            </option>)}
+        </select>)}
+      {curTemplate && !curTemplate.parametric && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 <b>고정 범위</b>라 아래 격자/먼지 파라미터는 무시됩니다.</p>}
+      {curTemplate && !curTemplate.simulator_key && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 브라우저 시뮬레이터가 없어 제출만 가능합니다(서버가 채점).</p>}
     </div>}
     <div className="card" style={{ marginBottom: 16 }}>
       {field("대회 제목", <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 7월 모의고사 #5" style={inputStyle} />)}

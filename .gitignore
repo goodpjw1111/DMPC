@@ -3,6 +3,10 @@
 .env.local
 *.env
 !*.env.example
+# local secret-value files saved next to the repo (DB URL / keys)
+/DATABASE_URL
+/SECRET_KEY
+/EVAL_SEED_SECRET
 
 # python
 __pycache__/
@@ -27,3 +31,4 @@ Thumbs.db
 # data / artifacts
 pgdata/
 *.log
+*.tsbuildinfo
