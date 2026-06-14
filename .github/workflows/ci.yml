@@ -14,7 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run test suite (stdlib only — no deps needed)
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+      - name: Install backend deps
+        # Most tests are pure stdlib, but the router tests (admin/replays/registration/
+        # dev-login) import the FastAPI app, which needs fastapi/pydantic/asyncpg/etc.
+        run: pip install -r api/requirements.txt
+      - name: Run test suite
         run: |
           set -e
           for t in \
