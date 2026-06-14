@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -75,6 +75,7 @@ class CreateContestIn(BaseModel):
     gen_params: GenParams = Field(default_factory=GenParams)   # grid/dust ranges (parametric)
     stepup: StepUpSpec
     challenge: ChallengeSpec
+    start_now: bool = False        # admin TEST switch: go live immediately (else the D+1 rule)
 
 
 def validate_create(body: CreateContestIn) -> None:
@@ -144,8 +145,16 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
     # the client-side simulator comes from the problem module's META, not a hardcoded
     # value — a new problem ships its own simulator_key (or null = no in-browser sim).
     sim_key = _template_meta(body.problem_key).get("simulator_key")
-    # dates follow the locked schedule rule: register today -> start D+1 09:00 KST, 3-day window.
-    starts_at, ends_at = contest_window(datetime.now(KST).date())
+    # dates: normal contests follow the locked rule (register today -> start D+1 09:00 KST,
+    # 3-day window). start_now is an admin TEST switch — create it live NOW for a 3-day window
+    # so the whole submit→grade→standings flow can be exercised without waiting for tomorrow.
+    if body.start_now:
+        starts_at = datetime.now(KST)
+        ends_at = starts_at + timedelta(days=3)
+        status = "live"
+    else:
+        starts_at, ends_at = contest_window(datetime.now(KST).date())
+        status = "scheduled"
     su_cfg, ch_cfg = problem_configs(body)
     insert_problem = (
         """INSERT INTO problems (contest_id, kind, problem_key, title, statement_md,
@@ -156,8 +165,8 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
         async with conn.transaction():
             c = await conn.fetchrow(
                 """INSERT INTO contests (title, status, starts_at, ends_at, created_by)
-                   VALUES ($1, 'scheduled', $2, $3, $4) RETURNING id""",
-                body.title, starts_at, ends_at, user.id,
+                   VALUES ($1, $5, $2, $3, $4) RETURNING id""",
+                body.title, starts_at, ends_at, user.id, status,
             )
             cid = c["id"]
             await conn.execute(
@@ -170,5 +179,5 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
                 body.challenge.statement_md, body.challenge.time_limit_ms, body.challenge.memory_limit_mb,
                 sim_key, json.dumps(ch_cfg),
             )
-    return {"id": str(cid), "status": "scheduled",
+    return {"id": str(cid), "status": status,
             "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}

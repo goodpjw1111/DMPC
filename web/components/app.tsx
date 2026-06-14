@@ -1045,6 +1045,7 @@ export function CreateContestView() {
   const [gen, setGen] = useState<GenParams>(DEFAULT_GEN);
   const [templates, setTemplates] = useState<ProblemTemplate[] | null>(null);
   const [problemKey, setProblemKey] = useState("clean_robot");
+  const [startNow, setStartNow] = useState(false);
   const [genLang, setGenLang] = useState("python3");
   const [genCode, setGenCode] = useState(GEN_CODE_DEFAULT);
   const [checkCode, setCheckCode] = useState(CHECK_CODE_DEFAULT);
@@ -1103,12 +1104,12 @@ export function CreateContestView() {
       setCreating(true);
       try {
         const r = await createContest({
-          title: title.trim(), problem_key: problemKey,
+          title: title.trim(), problem_key: problemKey, start_now: startNow,
           gen_params: { hMin: gen.hMin, hMax: gen.hMax, wMin: gen.wMin, wMax: gen.wMax, dMin: gen.dMin, dMax: gen.dMax },
           stepup: { statement_md: statement, given_seeds: seeds, time_limit_ms: timeMs, memory_limit_mb: memMb },
           challenge: { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
         });
-        showToast(`'${title.trim()}' 모의고사를 만들었습니다`, `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
+        showToast(`'${title.trim()}' 모의고사를 만들었습니다`, r.status === "live" ? "지금 바로 진행 중(테스트) — 제출 가능" : `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
         router.push(`/c/${r.id}`);
       } catch (e: any) {
         showToast("대회 생성 실패", String(e?.message ?? e));
@@ -1163,6 +1164,10 @@ export function CreateContestView() {
         </select>)}
       {curTemplate && !curTemplate.parametric && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 <b>고정 범위</b>라 아래 격자/먼지 파라미터는 무시됩니다.</p>}
       {curTemplate && !curTemplate.simulator_key && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 브라우저 시뮬레이터가 없어 제출만 가능합니다(서버가 채점).</p>}
+      <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 12, cursor: "pointer", fontSize: 13 }}>
+        <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} />
+        <span><b>지금 시작 (테스트용)</b> — 일정 규칙을 건너뛰고 <b>즉시 진행(live)</b>으로 만들어 바로 제출·채점을 확인합니다.</span>
+      </label>
     </div>}
     <div className="card" style={{ marginBottom: 16 }}>
       {field("대회 제목", <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 7월 모의고사 #5" style={inputStyle} />)}

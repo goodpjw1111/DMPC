@@ -146,6 +146,7 @@ export type GenParamsPayload = { hMin: number; hMax: number; wMin: number; wMax:
 export type CreateContestPayload = {
   title: string;
   problem_key: string;
+  start_now?: boolean;
   gen_params: GenParamsPayload;
   stepup: { statement_md: string; given_seeds: number[]; time_limit_ms: number; memory_limit_mb: number };
   challenge: { statement_md: string; seed_range: [number, number]; round_seeds: number; cost_eps: number; time_limit_ms: number; memory_limit_mb: number };
