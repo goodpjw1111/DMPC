@@ -141,7 +141,8 @@ export const getNotifications = () => apiGet<ApiNotif[]>("/api/notifications");
 export const markNotificationsRead = () => apiPost<{ ok: boolean }>("/api/notifications/read");
 
 // ---- admin authoring ----
-export type ProblemTemplate = { problem_key: string; title: string; kind: string | null; simulator_key: string | null; parametric: boolean };
+export type FeatureField = { key: string; label: string; min: number; max: number; default: number };
+export type ProblemTemplate = { problem_key: string; title: string; kind: string | null; simulator_key: string | null; parametric: boolean; feature_schema: FeatureField[] };
 export const getTemplates = () => apiGet<ProblemTemplate[]>("/api/admin/templates");
 export type GenParamsPayload = { hMin: number; hMax: number; wMin: number; wMax: number; dMin: number; dMax: number };
 export type CreateContestPayload = {
@@ -149,7 +150,7 @@ export type CreateContestPayload = {
   problem_key: string;
   start_now?: boolean;
   gen_params: GenParamsPayload;
-  stepup: { statement_md: string; given_seeds: number[]; time_limit_ms: number; memory_limit_mb: number };
+  stepup: { statement_md: string; given_seeds?: number[]; missions?: { seed: number; score: number; features: Record<string, number> }[]; time_limit_ms: number; memory_limit_mb: number };
   challenge: { statement_md: string; seed_range: [number, number]; round_seeds: number; cost_eps: number; time_limit_ms: number; memory_limit_mb: number };
 };
 export const createContest = (payload: CreateContestPayload) =>

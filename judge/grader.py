@@ -31,14 +31,36 @@ class MissionResult:
     message: str
 
 
-def mission_budgets(meta: dict, weights: list[float] | None = None) -> list[int]:
-    """Per-mission point budgets for the given_seeds, in order.
+def authored_missions(meta: dict) -> list[dict] | None:
+    """Author-defined Step Up cases `[{seed, score, features}]`, or None for the legacy
+    (given_seeds + difficulty-weighted) path. Each case carries its EXACT features and
+    its own point score (scores sum to stepup_budget, enforced at authoring time)."""
+    sm = meta.get("stepup_missions")
+    return sm if sm else None
 
-    Harder missions are worth MORE: each mission's share of `stepup_budget` is
-    proportional to its difficulty `weights` (e.g. the achievable reference cost from
-    `mission_weights`). A cumulative-weight staircase keeps the budgets summing EXACTLY
-    to stepup_budget (no remainder dropped). With no/invalid weights this degrades to
-    an even split (the original behaviour)."""
+
+def mission_params(meta: dict, seed: int):
+    """Generator params for mission `seed`: its exact per-case features when the contest
+    uses authored cases, else the shared gen_params (legacy ranges)."""
+    sm = authored_missions(meta)
+    if sm:
+        for m in sm:
+            if m.get("seed") == seed:
+                return m.get("features") or {}
+        return None
+    return meta.get("gen_params")
+
+
+def mission_budgets(meta: dict, weights: list[float] | None = None) -> list[int]:
+    """Per-mission point budgets, in mission order.
+
+    Authored cases: each mission's budget is the author's exact `score` (they sum to
+    stepup_budget). Legacy: harder missions are worth MORE — each mission's share of
+    `stepup_budget` is proportional to its difficulty `weights` (a cumulative-weight
+    staircase keeps the sum EXACT); no/invalid weights -> an even split."""
+    sm = authored_missions(meta)
+    if sm:
+        return [int(m.get("score", 0)) for m in sm]
     seeds = meta.get("given_seeds") or []
     n = max(1, len(seeds))
     b = meta.get("stepup_budget", scoring.STEPUP_BUDGET)
@@ -57,6 +79,12 @@ def mission_budgets(meta: dict, weights: list[float] | None = None) -> list[int]
 
 def mission_budget(meta: dict, seed: int, weights: list[float] | None = None) -> int:
     """The point budget of the mission identified by `seed`."""
+    sm = authored_missions(meta)
+    if sm:
+        for m in sm:
+            if m.get("seed") == seed:
+                return int(m.get("score", 0))
+        return 0
     seeds = meta.get("given_seeds") or []
     budgets = mission_budgets(meta, weights)
     idx = seeds.index(seed) if seed in seeds else 0
@@ -64,10 +92,9 @@ def mission_budget(meta: dict, seed: int, weights: list[float] | None = None) ->
 
 
 def mission_weights(problem: ModuleType, meta: dict) -> list[float]:
-    """Difficulty weight per mission = its achievable REFERENCE COST (the optimal
-    solution's cost). Harder instances need more moves -> higher reference cost ->
-    a larger share of the budget. Robust to a generator/checker hiccup (falls back to
-    weight 1 for that mission)."""
+    """Difficulty weight per mission = its achievable REFERENCE COST (LEGACY path only).
+    Harder instances need more moves -> higher reference cost -> a larger share of the
+    budget. Robust to a generator/checker hiccup (falls back to weight 1)."""
     seeds = meta.get("given_seeds") or []
     gp = meta.get("gen_params")
     out: list[float] = []
@@ -82,14 +109,16 @@ def mission_weights(problem: ModuleType, meta: dict) -> list[float]:
 def grade_stepup_mission(problem: ModuleType, seed: int, output: str,
                          meta: dict | None = None) -> MissionResult:
     """Grade one submitted output against one mission. Trusted: no user code runs.
-    `meta` overrides problem.META (admin-authored given_seeds/stepup_budget/gen_params)
-    so both the generated input and the mission budget reflect the per-contest config."""
+    `meta` overrides problem.META (admin-authored cases/seeds/budget/params) so both the
+    generated input and the mission budget reflect the per-contest config."""
     m = meta or problem.META
-    inp = problem.generate(seed, m.get("gen_params"))
+    inp = problem.generate(seed, mission_params(m, seed))
     cost, valid, message = problem.check(inp, output)
     ref = float(problem.reference_cost(inp))
     ratio = scoring.stepup_ratio(cost, ref)
-    pm = mission_budget(m, seed, mission_weights(problem, m))   # difficulty-weighted
+    # authored cases carry their own score; legacy uses difficulty-weighted budgets.
+    pm = (mission_budget(m, seed) if authored_missions(m)
+          else mission_budget(m, seed, mission_weights(problem, m)))
     return MissionResult(
         seed=seed, cost=cost, valid=valid, ref=ref, ratio=ratio,
         score=math.floor(pm * ratio), mission_budget=pm, message=message,

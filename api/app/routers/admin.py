@@ -44,6 +44,23 @@ def _template_meta(problem_key: str) -> dict:
     return dict(load_problem(problem_key).META)
 
 
+def _validate_features(meta: dict, feature_list: list[dict]) -> None:
+    """Validate authored EXACT features against the problem's META feature_schema
+    (each declared key present + within [min, max]). Generic — works for any problem
+    that declares a feature_schema."""
+    schema = meta.get("feature_schema")
+    if not schema:
+        raise HTTPException(400, "이 문제 템플릿은 케이스별 피처 저작을 지원하지 않습니다 (feature_schema 없음)")
+    for feats in feature_list:
+        for spec in schema:
+            key = spec["key"]
+            if key not in feats:
+                raise HTTPException(400, f"피처 '{spec.get('label', key)}' 값이 필요합니다")
+            v, lo, hi = feats[key], spec.get("min"), spec.get("max")
+            if (lo is not None and v < lo) or (hi is not None and v > hi):
+                raise HTTPException(400, f"피처 '{spec.get('label', key)}'는 {lo}~{hi} 범위여야 합니다 (입력: {v})")
+
+
 class GenParams(BaseModel):
     hMin: int = 6
     hMax: int = 9
@@ -53,9 +70,16 @@ class GenParams(BaseModel):
     dMax: int = 10
 
 
+class StepUpMissionSpec(BaseModel):
+    seed: int = Field(ge=0)
+    score: int = Field(ge=0, le=STEPUP_BUDGET)
+    features: dict[str, int] = Field(default_factory=dict)   # exact per-case features (problem-specific)
+
+
 class StepUpSpec(BaseModel):
     statement_md: str = Field(default="", max_length=MAX_STATEMENT)
-    given_seeds: list[int]
+    given_seeds: list[int] = []                  # legacy path (ranges + difficulty-weighted budgets)
+    missions: list[StepUpMissionSpec] = []       # new path (exact features + author-set scores; sum==budget)
     time_limit_ms: int = Field(default=2000, ge=100, le=10_000)
     memory_limit_mb: int = Field(default=1024, ge=64, le=4096)
 
@@ -82,13 +106,26 @@ def validate_create(body: CreateContestIn) -> None:
     """Pure validation (no DB) — raises HTTPException(400) on a bad request.
     Factored out so it is unit-testable without a database."""
     meta = _template_meta(body.problem_key)
-    seeds = body.stepup.given_seeds
-    if not (1 <= len(seeds) <= MAX_SEEDS):
-        raise HTTPException(400, f"스텝업 미션 시드는 1~{MAX_SEEDS}개여야 합니다")
-    if len(set(seeds)) != len(seeds):
-        raise HTTPException(400, "스텝업 미션 시드는 중복될 수 없습니다")
-    if any(s < 0 for s in seeds):
-        raise HTTPException(400, "스텝업 미션 시드는 음수가 될 수 없습니다")
+    # Step Up: authored per-case (exact features + author scores) OR legacy (seeds + ranges).
+    sm = body.stepup.missions
+    if sm:
+        if not (1 <= len(sm) <= MAX_SEEDS):
+            raise HTTPException(400, f"스텝업 케이스는 1~{MAX_SEEDS}개여야 합니다")
+        case_seeds = [m.seed for m in sm]
+        if len(set(case_seeds)) != len(case_seeds):
+            raise HTTPException(400, "스텝업 케이스 시드는 중복될 수 없습니다")
+        if sum(m.score for m in sm) != STEPUP_BUDGET:
+            raise HTTPException(400, f"스텝업 케이스 점수 합이 정확히 {STEPUP_BUDGET:,}이어야 합니다 "
+                                     f"(현재 {sum(m.score for m in sm):,})")
+        _validate_features(meta, [m.features for m in sm])
+    else:
+        seeds = body.stepup.given_seeds
+        if not (1 <= len(seeds) <= MAX_SEEDS):
+            raise HTTPException(400, f"스텝업 미션 시드는 1~{MAX_SEEDS}개여야 합니다")
+        if len(set(seeds)) != len(seeds):
+            raise HTTPException(400, "스텝업 미션 시드는 중복될 수 없습니다")
+        if any(s < 0 for s in seeds):
+            raise HTTPException(400, "스텝업 미션 시드는 음수가 될 수 없습니다")
     rng = body.challenge.seed_range
     if len(rng) != 2 or not (0 <= rng[0] <= rng[1] <= 10_000_000):
         raise HTTPException(400, "챌린지 시드 범위는 [lo, hi] (0 ≤ lo ≤ hi ≤ 1천만) 여야 합니다")
@@ -108,10 +145,21 @@ def validate_create(body: CreateContestIn) -> None:
 
 
 def problem_configs(body: CreateContestIn) -> tuple[dict, dict]:
-    """The two `scoring_config` jsonb payloads (Step Up, Challenge). Pure → testable.
-    gen_params (grid/dust ranges) drive the parametric generator on BOTH problems."""
+    """The two `scoring_config` jsonb payloads (Step Up, Challenge). Pure → testable."""
     gp = body.gen_params.model_dump()
-    su = {"given_seeds": list(body.stepup.given_seeds), "stepup_budget": STEPUP_BUDGET, "gen_params": gp}
+    if body.stepup.missions:
+        # authored per-case: each case has exact features + its own score (sum==budget).
+        # given_seeds mirrors the case seeds so the seed-membership/read paths are unchanged.
+        su = {
+            "given_seeds": [m.seed for m in body.stepup.missions],
+            "stepup_budget": STEPUP_BUDGET,
+            "stepup_missions": [
+                {"seed": m.seed, "score": m.score, "features": dict(m.features)}
+                for m in body.stepup.missions
+            ],
+        }
+    else:
+        su = {"given_seeds": list(body.stepup.given_seeds), "stepup_budget": STEPUP_BUDGET, "gen_params": gp}
     ch = {"seed_range": [body.challenge.seed_range[0], body.challenge.seed_range[1]],
           "round_seeds": body.challenge.round_seeds, "cost_eps": body.challenge.cost_eps,
           "gen_params": gp}
@@ -135,6 +183,7 @@ async def list_templates(user: CurrentUser = Depends(require_admin)):
             "kind": meta.get("kind"),
             "simulator_key": meta.get("simulator_key"),
             "parametric": "gen_params" in meta,
+            "feature_schema": meta.get("feature_schema") or [],
         })
     return out
 

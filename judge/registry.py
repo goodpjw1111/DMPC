@@ -37,7 +37,7 @@ def list_problem_keys() -> list[str]:
 # (The generator/checker CODE still comes from the pinned module; only these scalars
 # are per-contest.) Step Up: given_seeds + stepup_budget. Challenge config lives in
 # scoring_config directly (seed_range/round_seeds/cost_eps) and is read by the worker.
-_META_OVERRIDE_KEYS = ("given_seeds", "stepup_budget", "gen_params")
+_META_OVERRIDE_KEYS = ("given_seeds", "stepup_budget", "gen_params", "stepup_missions", "challenge_subtasks")
 
 
 def effective_meta(module_meta: dict, scoring_config: dict | None) -> dict:

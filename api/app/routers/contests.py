@@ -10,7 +10,7 @@ from ..deps import CurrentUser, assert_contest_ended, get_current_user
 
 # judge core (registry) for missions/inputs
 sys.path.insert(0, grading._JUDGE)
-from grader import mission_budgets, mission_weights  # noqa: E402
+from grader import mission_budgets, mission_params, mission_weights  # noqa: E402
 from registry import effective_meta, load_problem  # noqa: E402
 from scoring import weighted_total  # noqa: E402
 
@@ -187,7 +187,7 @@ def _example_io(mod, meta: dict) -> tuple[str | None, str | None]:
     try:
         seeds = meta.get("given_seeds") or []
         seed = seeds[0] if seeds else 0
-        inp = mod.generate(seed, meta.get("gen_params"))
+        inp = mod.generate(seed, mission_params(meta, seed))
         out = mod.sample_solution(inp) if hasattr(mod, "sample_solution") else None
         return inp, out
     except Exception:                       # noqa: BLE001 — examples are non-critical
@@ -207,7 +207,8 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
     base["example_input"], base["example_output"] = _example_io(mod, meta)
     if p["kind"] == "stepup":
         seeds = meta.get("given_seeds") or []
-        budgets = mission_budgets(meta, mission_weights(mod, meta))   # difficulty-weighted, sums to budget
+        budgets = (mission_budgets(meta) if meta.get("stepup_missions")
+                   else mission_budgets(meta, mission_weights(mod, meta)))   # authored scores or difficulty-weighted
         best = await db.fetch(
             """SELECT mission_seed, max(score) AS best FROM stepup_submissions
                WHERE problem_id=$1 AND user_id=$2 GROUP BY mission_seed""",
@@ -230,4 +231,4 @@ async def mission_input(pid: str, seed: int, user: CurrentUser = Depends(get_cur
     meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
     if seed not in (meta.get("given_seeds") or []):
         raise HTTPException(404, "not found")
-    return Response(mod.generate(seed, meta.get("gen_params")), media_type="text/plain")
+    return Response(mod.generate(seed, mission_params(meta, seed)), media_type="text/plain")

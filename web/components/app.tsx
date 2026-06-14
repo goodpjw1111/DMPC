@@ -1072,6 +1072,15 @@ const CHECK_CODE_DEFAULT = `def check(input_text, output_text):
     # TODO: (cost, valid, message) 반환 — 최소화(낮을수록 좋음). 무효면 cost=None.
     return (None, False, "TODO")`;
 
+// Fallback feature schema (used before /api/admin/templates loads); the API is the
+// source of truth. Step Up cases set EXACT values for these per case.
+const CLEAN_FEATURES = [
+  { key: "h", label: "행 N", min: 2, max: 50, default: 8 },
+  { key: "w", label: "열 M", min: 2, max: 50, default: 8 },
+  { key: "dust", label: "먼지 수", min: 1, max: 2400, default: 8 },
+];
+type StepCase = { seed: number; score: number; features: Record<string, number> };
+
 export function CreateContestView() {
   const { apiMode, isAdmin, addContest, showToast } = useStore();
   const router = useRouter();
@@ -1087,6 +1096,7 @@ export function CreateContestView() {
   const [templates, setTemplates] = useState<ProblemTemplate[] | null>(null);
   const [problemKey, setProblemKey] = useState("clean_robot");
   const [startNow, setStartNow] = useState(false);
+  const [missions, setMissions] = useState<StepCase[]>([]);   // Step Up: per-case features + scores
   const [genLang, setGenLang] = useState("python3");
   const [genCode, setGenCode] = useState(GEN_CODE_DEFAULT);
   const [checkCode, setCheckCode] = useState(CHECK_CODE_DEFAULT);
@@ -1110,18 +1120,47 @@ export function CreateContestView() {
     return () => { on = false; };
   }, [apiMode, isAdmin]);
   const curTemplate = templates?.find((t) => t.problem_key === problemKey) ?? null;
+  // the selected problem's authorable features (from META; fallback before templates load).
+  const featSchema = (curTemplate?.feature_schema?.length ? curTemplate.feature_schema
+    : (problemKey === "clean_robot" ? CLEAN_FEATURES : []));
+  const schemaKeys = featSchema.map((f) => f.key).join(",");
+  // (re)seed the Step Up case table when the feature schema changes (e.g. problem switch).
+  useEffect(() => {
+    if (!apiMode || !schemaKeys) { if (!apiMode) return; setMissions([]); return; }
+    const keys = schemaKeys.split(",");
+    const defFeats = Object.fromEntries(featSchema.map((f) => [f.key, f.default]));
+    const n = 3, base = Math.floor(1_000_000 / n);
+    setMissions((prev) => {
+      if (prev.length && Object.keys(prev[0].features).join(",") === keys.join(",")) return prev;
+      return Array.from({ length: n }, (_, i) => ({
+        seed: 101 + i, score: i === 0 ? 1_000_000 - base * (n - 1) : base, features: { ...defFeats },
+      }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiMode, schemaKeys]);
 
   const rawSeedCount = seedsText.split(/[\s,]+/).filter((t) => t.trim().length).length;
   const seeds = Array.from(new Set(seedsText.split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)));
   const dropped = rawSeedCount - seeds.length;
   const genOk = gen.hMin <= gen.hMax && gen.wMin <= gen.wMax && gen.dMin <= gen.dMax && gen.hMin >= 2 && gen.wMin >= 2 && gen.dMin >= 0;
   const codeHasTodo = genType === "code" && (genCode.includes("TODO") || checkCode.includes("TODO"));
-  const stepOk = genType === "code" ? genCode.trim().length > 0 && !codeHasTodo : genOk;
-  const valid = title.trim().length > 0 && seeds.length >= 1 && stepOk && seedLo <= seedHi && roundSeeds >= 1;
+  // Real-API Step Up uses the per-case table (exact features + author scores, sum==1e6);
+  // mock mode keeps the legacy ranges+seeds path.
+  const useMissions = apiMode && genType === "param";
+  const scoreSum = missions.reduce((a, m) => a + (Number(m.score) || 0), 0);
+  const seedDup = new Set(missions.map((m) => m.seed)).size !== missions.length;
+  const featOk = missions.every((m) => featSchema.every((f) => { const v = m.features[f.key]; return Number.isFinite(v) && v >= f.min && v <= f.max; }));
+  const missionsOk = missions.length >= 1 && scoreSum === 1_000_000 && featOk && !seedDup;
+  const stepOk = genType === "code" ? (genCode.trim().length > 0 && !codeHasTodo) : (useMissions ? missionsOk : genOk);
+  const valid = title.trim().length > 0 && (useMissions || seeds.length >= 1) && stepOk && seedLo <= seedHi && roundSeeds >= 1;
   // first failing reason, so the disabled-button hint is specific (not a catch-all)
   const reason = !title.trim() ? "대회 제목을 입력하세요."
-    : seeds.length < 1 ? "미션 시드를 1개 이상 입력하세요."
-    : genType === "param" && !genOk ? "격자/먼지 범위를 확인하세요 (H·W ≥ 2, 최소 ≤ 최대)."
+    : useMissions && missions.length < 1 ? "스텝업 케이스를 1개 이상 추가하세요."
+    : useMissions && seedDup ? "스텝업 케이스 시드가 중복됩니다."
+    : useMissions && !featOk ? "케이스 피처 값이 허용 범위를 벗어났습니다."
+    : useMissions && scoreSum !== 1_000_000 ? `케이스 점수 합이 1,000,000이어야 합니다 (현재 ${scoreSum.toLocaleString()}).`
+    : !useMissions && seeds.length < 1 ? "미션 시드를 1개 이상 입력하세요."
+    : !useMissions && genType === "param" && !genOk ? "격자/먼지 범위를 확인하세요 (H·W ≥ 2, 최소 ≤ 최대)."
     : genType === "code" && codeHasTodo ? "생성기/체커 코드의 TODO를 채우세요."
     : genType === "code" && !genCode.trim() ? "생성기 코드를 입력하세요."
     : seedLo > seedHi ? "챌린지 시드 범위가 거꾸로입니다 (시작 ≤ 끝)."
@@ -1147,7 +1186,9 @@ export function CreateContestView() {
         const r = await createContest({
           title: title.trim(), problem_key: problemKey, start_now: startNow,
           gen_params: { hMin: gen.hMin, hMax: gen.hMax, wMin: gen.wMin, wMax: gen.wMax, dMin: gen.dMin, dMax: gen.dMax },
-          stepup: { statement_md: statement, given_seeds: seeds, time_limit_ms: timeMs, memory_limit_mb: memMb },
+          stepup: useMissions
+            ? { statement_md: statement, missions, time_limit_ms: timeMs, memory_limit_mb: memMb }
+            : { statement_md: statement, given_seeds: seeds, time_limit_ms: timeMs, memory_limit_mb: memMb },
           challenge: { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
         });
         showToast(`'${title.trim()}' 모의고사를 만들었습니다`, r.status === "live" ? "지금 바로 진행 중(테스트) — 제출 가능" : `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
@@ -1174,6 +1215,19 @@ export function CreateContestView() {
   const num = (v: number, set: (n: number) => void, w = 60) => <input type="number" value={v} onChange={(e) => set(parseInt(e.target.value || "0", 10) || 0)} style={{ width: w, ...numCss }} />;
   const numF = (v: number, set: (n: number) => void, w = 60) => <input type="number" step="any" value={v} onChange={(e) => set(parseFloat(e.target.value || "0") || 0)} style={{ width: w, ...numCss }} />;
   const field = (label: ReactNode, node: ReactNode) => <div style={{ marginBottom: 14 }}><label className="muted" style={{ fontSize: 12, display: "block", marginBottom: 5 }}>{label}</label>{node}</div>;
+  // Step Up case-table helpers (real-API authoring: exact features + per-case scores).
+  const setCase = (i: number, patch: Partial<StepCase>) => setMissions((ms) => ms.map((m, j) => (j === i ? { ...m, ...patch } : m)));
+  const setFeat = (i: number, key: string, v: number) => setMissions((ms) => ms.map((m, j) => (j === i ? { ...m, features: { ...m.features, [key]: v } } : m)));
+  const addCase = () => setMissions((ms) => {
+    const ns = ms.length ? Math.max(...ms.map((m) => m.seed)) + 1 : 101;
+    return [...ms, { seed: ns, score: 0, features: Object.fromEntries(featSchema.map((f) => [f.key, f.default])) }];
+  });
+  const distributeScores = () => setMissions((ms) => {
+    const n = ms.length || 1, base = Math.floor(1_000_000 / n);
+    return ms.map((m, i) => ({ ...m, score: i === 0 ? 1_000_000 - base * (n - 1) : base }));
+  });
+  const hasCleanGrid = featSchema.some((f) => f.key === "h") && featSchema.some((f) => f.key === "w");
+  const featuresToGen = (f: Record<string, number>): GenParams => ({ hMin: f.h ?? 8, hMax: f.h ?? 8, wMin: f.w ?? 8, wMax: f.w ?? 8, dMin: f.dust ?? 0, dMax: f.dust ?? 0 });
   const imgBtn = (set: (fn: (s: string) => string) => void) => (
     <label className="btn ghost" style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer", display: "inline-block" }}>🖼 이미지 첨부
       <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) attachImage(f, set); e.currentTarget.value = ""; }} /></label>
@@ -1198,7 +1252,7 @@ export function CreateContestView() {
         <b>커스텀 생성기 코드</b>는 샌드박스 채점이 필요해 아직 준비 중입니다.</p>
       {field("문제 템플릿",
         <select className="dd" value={problemKey} onChange={(e) => setProblemKey(e.target.value)} style={{ width: "100%" }}>
-          {(templates ?? [{ problem_key: "clean_robot", title: "청소 로봇 (파라미터)", kind: null, simulator_key: "clean", parametric: true }]).map((t) =>
+          {(templates ?? [{ problem_key: "clean_robot", title: "청소 로봇 (파라미터)", kind: null, simulator_key: "clean", parametric: true, feature_schema: CLEAN_FEATURES }]).map((t) =>
             <option key={t.problem_key} value={t.problem_key}>
               {t.title} — {t.problem_key}{t.parametric ? " · 파라미터" : " · 고정범위"}{t.simulator_key ? "" : " · 시뮬레이터 없음"}
             </option>)}
@@ -1225,22 +1279,56 @@ export function CreateContestView() {
         <button className={"tab" + (genType === "code" ? " active" : "")} onClick={() => setGenType("code")}>커스텀 코드</button>
       </div>)}
       {genType === "param" && <p className="muted" style={{ margin: "-8px 0 12px", fontSize: 12 }}>※ 파라미터 방식은 청소 로봇 문제 전용입니다. 다른 문제는 <b>커스텀 코드</b>를 사용하세요.</p>}
-      {genType === "param" ? <>
-        {field("격자/먼지 범위", <div className="row" style={{ gap: 16, flexWrap: "wrap", fontSize: 13 }}>
-          <span>행 H {num(gen.hMin, (n) => setGen({ ...gen, hMin: n }))} ~ {num(gen.hMax, (n) => setGen({ ...gen, hMax: n }))}</span>
-          <span>열 W {num(gen.wMin, (n) => setGen({ ...gen, wMin: n }))} ~ {num(gen.wMax, (n) => setGen({ ...gen, wMax: n }))}</span>
-          <span>먼지 {num(gen.dMin, (n) => setGen({ ...gen, dMin: n }))} ~ {num(gen.dMax, (n) => setGen({ ...gen, dMax: n }))}</span></div>)}
+      {useMissions ? <>
+        {genType === "param" && <p className="muted" style={{ margin: "-8px 0 12px", fontSize: 12 }}>※ 케이스마다 <b>정확한 피처값</b>과 <b>점수</b>를 지정합니다. 점수 합은 <b>1,000,000</b>이어야 합니다. (피처는 문제 템플릿이 선언)</p>}
+        {field(<>스텝업 케이스 <span className="muted">— 케이스별 피처(정확값)와 점수 직접 지정</span></>,
+          <div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>#</th>
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>시드</th>
+                  {featSchema.map((f) => <th key={f.key} style={{ padding: "4px 6px", fontWeight: 500 }}>{f.label} <span style={{ fontSize: 10, opacity: .7 }}>{f.min}~{f.max}</span></th>)}
+                  <th style={{ padding: "4px 6px", fontWeight: 500 }}>점수</th>
+                  <th></th>
+                </tr></thead>
+                <tbody>
+                  {missions.map((m, i) => <tr key={i}>
+                    <td style={{ padding: "3px 6px", color: "var(--muted)" }}>{i + 1}</td>
+                    <td style={{ padding: "3px 6px" }}><input type="number" value={m.seed} onChange={(e) => setCase(i, { seed: parseInt(e.target.value || "0", 10) || 0 })} style={{ width: 72, ...numCss }} /></td>
+                    {featSchema.map((f) => { const v = m.features[f.key]; const bad = !(Number.isFinite(v) && v >= f.min && v <= f.max); return <td key={f.key} style={{ padding: "3px 6px" }}><input type="number" value={Number.isFinite(v) ? v : ""} onChange={(e) => setFeat(i, f.key, parseInt(e.target.value || "0", 10) || 0)} style={{ width: 66, ...numCss, borderColor: bad ? "var(--bad)" : undefined }} /></td>; })}
+                    <td style={{ padding: "3px 6px" }}><input type="number" value={m.score} onChange={(e) => setCase(i, { score: parseInt(e.target.value || "0", 10) || 0 })} style={{ width: 104, ...numCss }} /></td>
+                    <td style={{ padding: "3px 6px" }}><button className="btn ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setMissions((ms) => ms.filter((_, j) => j !== i))} disabled={missions.length <= 1}>✕</button></td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+            <div className="row" style={{ gap: 10, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12 }} onClick={addCase}>+ 케이스 추가</button>
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12 }} onClick={distributeScores}>점수 균등분배</button>
+              <span style={{ fontSize: 12, color: scoreSum === 1_000_000 ? "var(--green)" : "var(--bad)" }}>점수 합 <b>{scoreSum.toLocaleString()}</b> / 1,000,000</span>
+            </div>
+          </div>)}
+        {hasCleanGrid && <div className="row" style={{ gap: 10 }}><button className="btn ghost" disabled={!missions.length} onClick={() => setPreview((s) => !s)}>케이스 1 미리보기 (시드 {missions[0]?.seed ?? "—"})</button></div>}
+        {hasCleanGrid && preview && missions[0] && <pre style={{ marginTop: 10, background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 10, fontSize: 12, overflow: "auto" }}>{genClean(missions[0].seed, featuresToGen(missions[0].features))}</pre>}
       </> : <>
-        {field(<>생성기 코드 — <span className="muted">seed → 입력</span> <span className="pill">현재 python3만 지원</span></>, <textarea className="editor" style={{ minHeight: 130 }} value={genCode} onChange={(e) => setGenCode(e.target.value)} spellCheck={false} />)}
-        {field(<>체커 코드 — <span className="muted">입력+출력 → (cost, valid, message)</span></>, <textarea className="editor" style={{ minHeight: 110 }} value={checkCode} onChange={(e) => setCheckCode(e.target.value)} spellCheck={false} />)}
-        <p className="muted" style={{ margin: "0 0 12px", fontSize: 12 }}>커스텀 생성기/체커는 <b>서버 그레이더(샌드박스)</b>에서 실행됩니다. (브라우저 미리보기·플레이는 청소 로봇 파라미터 방식만 지원) · TODO를 모두 채워야 생성할 수 있어요.</p>
+        {genType === "param" ? <>
+          {field("격자/먼지 범위", <div className="row" style={{ gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+            <span>행 H {num(gen.hMin, (n) => setGen({ ...gen, hMin: n }))} ~ {num(gen.hMax, (n) => setGen({ ...gen, hMax: n }))}</span>
+            <span>열 W {num(gen.wMin, (n) => setGen({ ...gen, wMin: n }))} ~ {num(gen.wMax, (n) => setGen({ ...gen, wMax: n }))}</span>
+            <span>먼지 {num(gen.dMin, (n) => setGen({ ...gen, dMin: n }))} ~ {num(gen.dMax, (n) => setGen({ ...gen, dMax: n }))}</span></div>)}
+        </> : <>
+          {field(<>생성기 코드 — <span className="muted">seed → 입력</span> <span className="pill">현재 python3만 지원</span></>, <textarea className="editor" style={{ minHeight: 130 }} value={genCode} onChange={(e) => setGenCode(e.target.value)} spellCheck={false} />)}
+          {field(<>체커 코드 — <span className="muted">입력+출력 → (cost, valid, message)</span></>, <textarea className="editor" style={{ minHeight: 110 }} value={checkCode} onChange={(e) => setCheckCode(e.target.value)} spellCheck={false} />)}
+          <p className="muted" style={{ margin: "0 0 12px", fontSize: 12 }}>커스텀 생성기/체커는 <b>서버 그레이더(샌드박스)</b>에서 실행됩니다. (브라우저 미리보기·플레이는 청소 로봇 파라미터 방식만 지원) · TODO를 모두 채워야 생성할 수 있어요.</p>
+        </>}
+        {field("미션 시드 (쉼표 또는 공백 구분 — 미션마다 하나)", <>
+          <input value={seedsText} onChange={(e) => setSeedsText(e.target.value)} style={inputStyle} />
+          <div className="muted" style={{ fontSize: 12, marginTop: 5 }}>인식된 시드 <b>{seeds.length}</b>개{dropped > 0 && <span className="bad"> · 무시된 항목 {dropped}개 (숫자가 아니거나 음수·중복)</span>}</div>
+        </>)}
+        {genType === "param" && <div className="row" style={{ gap: 10 }}><button className="btn ghost" disabled={!seeds.length || !genOk} onClick={() => setPreview((s) => !s)}>생성기 미리보기 (시드 {seeds[0] ?? "—"})</button><span className="muted" style={{ fontSize: 12 }}>미션 {seeds.length}개 · 미션당 배점 {seeds.length ? fmt(Math.floor(1000000 / seeds.length)) : "—"}</span></div>}
+        {genType === "param" && preview && seeds.length > 0 && genOk && <pre style={{ marginTop: 10, background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 10, fontSize: 12, overflow: "auto" }}>{genClean(seeds[0], gen)}</pre>}
       </>}
-      {field("미션 시드 (쉼표 또는 공백 구분 — 미션마다 하나)", <>
-        <input value={seedsText} onChange={(e) => setSeedsText(e.target.value)} style={inputStyle} />
-        <div className="muted" style={{ fontSize: 12, marginTop: 5 }}>인식된 시드 <b>{seeds.length}</b>개{dropped > 0 && <span className="bad"> · 무시된 항목 {dropped}개 (숫자가 아니거나 음수·중복)</span>}</div>
-      </>)}
-      {genType === "param" && <div className="row" style={{ gap: 10 }}><button className="btn ghost" disabled={!seeds.length || !genOk} onClick={() => setPreview((s) => !s)}>생성기 미리보기 (시드 {seeds[0] ?? "—"})</button><span className="muted" style={{ fontSize: 12 }}>미션 {seeds.length}개 · 미션당 배점 {seeds.length ? fmt(Math.floor(1000000 / seeds.length)) : "—"}</span></div>}
-      {genType === "param" && preview && seeds.length > 0 && genOk && <pre style={{ marginTop: 10, background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 10, fontSize: 12, overflow: "auto" }}>{genClean(seeds[0], gen)}</pre>}
     </div>
 
     <h3 style={{ margin: "4px 0 10px" }}>② 챌린지 (코드 제출 · 만점 1,000,000 · 총점 반영 80%)</h3>

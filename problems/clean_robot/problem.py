@@ -40,6 +40,14 @@ META = {
     "stepup_budget": 1000000,
     "given_seeds": [101, 102, 103],     # overridden per-contest via scoring_config
     "gen_params": DEFAULT_PARAMS,
+    # Authorable per-instance features. Step Up cases set EXACT values; Challenge
+    # subtasks set RANGES over them. The admin form renders an input per entry and
+    # feeds the values to generate() as params (exact -> a pinned single-value range).
+    "feature_schema": [
+        {"key": "h", "label": "행 N", "min": 2, "max": 50, "default": 8},
+        {"key": "w", "label": "열 M", "min": 2, "max": 50, "default": 8},
+        {"key": "dust", "label": "먼지 수", "min": 1, "max": 2400, "default": 8},
+    ],
     "statement_md": (
         "## 청소 로봇\n\n로봇이 H×W 격자의 좌상단(0,0)에서 시작합니다. `*`는 먼지입니다.\n"
         "`U/D/L/R`로 이동하며 칸을 밟으면 청소됩니다. **모든 먼지를 청소**하는 이동 문자열을 "
@@ -72,7 +80,15 @@ def _mulberry32(seed: int):
 def _merged_params(params: dict | None) -> dict:
     p = dict(DEFAULT_PARAMS)
     if params:
-        for k in DEFAULT_PARAMS:
+        # exact per-case features pin a range to a single value (authored Step Up cases):
+        #   {"h": 8, "w": 10, "dust": 5}  ->  hMin=hMax=8, wMin=wMax=10, dMin=dMax=5
+        if params.get("h") is not None:
+            p["hMin"] = p["hMax"] = int(params["h"])
+        if params.get("w") is not None:
+            p["wMin"] = p["wMax"] = int(params["w"])
+        if params.get("dust") is not None:
+            p["dMin"] = p["dMax"] = int(params["dust"])
+        for k in DEFAULT_PARAMS:                  # explicit ranges (hMin/hMax/...) still win
             if params.get(k) is not None:
                 p[k] = int(params[k])
     return p
