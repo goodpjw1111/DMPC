@@ -22,6 +22,7 @@ class CurrentUser:
     display_name: str
     nickname: str | None
     role: str
+    is_tester: bool = False        # may access TESTER-ONLY (draft) contests
 
     @property
     def is_admin(self) -> bool:
@@ -37,9 +38,11 @@ async def get_current_user(
     row = await sessions.lookup_session(sid)
     if row is None:
         raise HTTPException(status_code=401, detail="invalid session")
+    email, role = row["email"], row["role"]
     return CurrentUser(
-        id=str(row["user_id"]), email=row["email"],
-        display_name=row["display_name"], nickname=row["nickname"], role=row["role"],
+        id=str(row["user_id"]), email=email,
+        display_name=row["display_name"], nickname=row["nickname"], role=role,
+        is_tester=(role == "admin" or email.lower() in settings.tester_email_set),
     )
 
 

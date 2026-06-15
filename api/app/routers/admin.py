@@ -130,6 +130,7 @@ class CreateContestIn(BaseModel):
     stepup: StepUpSpec
     challenge: ChallengeSpec
     start_now: bool = False        # admin TEST switch: go live immediately (else the D+1 rule)
+    draft: bool = False            # TESTER-ONLY: create as a private draft (only testers/admins see it)
 
 
 def validate_create(body: CreateContestIn) -> None:
@@ -247,7 +248,11 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
     # dates: normal contests follow the locked rule (register today -> start D+1 09:00 KST,
     # 3-day window). start_now is an admin TEST switch — create it live NOW for a 3-day window
     # so the whole submit→grade→standings flow can be exercised without waiting for tomorrow.
-    if body.start_now:
+    if body.draft:                    # tester-only private draft (hidden from participants)
+        starts_at = datetime.now(KST)
+        ends_at = starts_at + timedelta(days=3)
+        status = "draft"
+    elif body.start_now:
         starts_at = datetime.now(KST)
         ends_at = starts_at + timedelta(days=3)
         status = "live"
@@ -292,8 +297,8 @@ async def evaluate_now(cid: str, user: CurrentUser = Depends(require_admin)):
     c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
     if not c:
         raise HTTPException(404, "대회를 찾을 수 없습니다")
-    if c["status"] not in ("live", "ended"):
-        raise HTTPException(400, "진행 중(live) 또는 종료(ended) 대회만 평가할 수 있습니다")
+    if c["status"] not in ("draft", "live", "ended"):
+        raise HTTPException(400, "초안(draft)·진행 중(live)·종료(ended) 대회만 평가할 수 있습니다")
     if not await db.fetchrow("SELECT 1 FROM problems WHERE contest_id=$1 AND kind='challenge'", cid):
         raise HTTPException(400, "이 대회에는 챌린지 문제가 없습니다")
     now = datetime.now(KST)
@@ -333,3 +338,19 @@ async def end_contest(cid: str, user: CurrentUser = Depends(require_admin)):
                 rid = row["id"]
     await ci_dispatch.fire("evals")
     return {"status": "ended", "final_round_id": str(rid), "ends_at": now.isoformat()}
+
+
+@router.post("/contests/{cid}/publish")
+async def publish_contest(cid: str, user: CurrentUser = Depends(require_admin)):
+    """Promote a TESTER-ONLY draft to a live, public contest (start now, 3-day window).
+    Used after testers have verified a new problem privately."""
+    c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
+    if not c:
+        raise HTTPException(404, "대회를 찾을 수 없습니다")
+    if c["status"] != "draft":
+        raise HTTPException(400, "초안(draft) 대회만 공개할 수 있습니다")
+    now = datetime.now(KST)
+    ends_at = now + timedelta(days=3)
+    await db.execute("UPDATE contests SET status='live', starts_at=$2, ends_at=$3 WHERE id=$1",
+                     cid, now, ends_at)
+    return {"status": "live", "starts_at": now.isoformat(), "ends_at": ends_at.isoformat()}

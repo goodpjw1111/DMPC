@@ -30,7 +30,7 @@ _RELEASED = ("live", "ended", "archived")        # contest has started (statemen
 _PRE_RELEASE = ("draft", "scheduled")            # not started — must not confirm a problem exists
 
 
-async def _problem_live(pid: str, kind: str):
+async def _problem_live(pid: str, kind: str, *, tester: bool = False):
     p = await db.fetchrow(
         """SELECT p.*, c.status AS contest_status FROM problems p
            JOIN contests c ON c.id = p.contest_id WHERE p.id = $1""",
@@ -39,25 +39,27 @@ async def _problem_live(pid: str, kind: str):
     if not p or p["kind"] != kind:
         raise HTTPException(404, "not found")
     # a pre-release contest must 404 (knowing a UUID must not confirm the problem exists);
-    # a released-but-closed contest (ended/archived) gives an informative 403.
+    # a released-but-closed contest (ended/archived) gives an informative 403. A TESTER may
+    # submit to a draft/scheduled contest (private testing of a new problem).
     if p["contest_status"] in _PRE_RELEASE:
+        if tester:
+            return p
         raise HTTPException(404, "not found")
     if p["contest_status"] != "live":
         raise HTTPException(403, "contest is not accepting submissions")
     return p
 
 
-async def _released_problem(pid: str, kind: str):
-    """Read-side gate: a problem is visible only once its contest is released (started).
-    404 otherwise — closes the pre-release existence/IDOR leak on the list endpoints
-    below (mirrors contests._released_problem). user_id filtering already scopes rows to
-    the caller; this additionally hides that a draft/scheduled problem exists at all."""
+async def _released_problem(pid: str, kind: str, *, tester: bool = False):
+    """Read-side gate: a problem is visible only once its contest is released (started) —
+    or, for a tester, even a draft/scheduled one. 404 otherwise — closes the pre-release
+    existence/IDOR leak on the list endpoints (mirrors contests._released_problem)."""
     p = await db.fetchrow(
         """SELECT p.kind, c.status AS contest_status FROM problems p
            JOIN contests c ON c.id = p.contest_id WHERE p.id = $1""",
         pid,
     )
-    if not p or p["kind"] != kind or p["contest_status"] not in _RELEASED:
+    if not p or p["kind"] != kind or (p["contest_status"] not in _RELEASED and not tester):
         raise HTTPException(404, "not found")
     return p
 
@@ -71,7 +73,7 @@ class StepUpIn(BaseModel):
 
 @router.post("/problems/{pid}/stepup/submit")
 async def stepup_submit(pid: str, body: StepUpIn, user: CurrentUser = Depends(get_current_user)):
-    p = await _problem_live(pid, "stepup")
+    p = await _problem_live(pid, "stepup", tester=user.is_tester)
     try:
         async with db.pool().acquire() as conn:
             async with conn.transaction():
@@ -87,7 +89,7 @@ async def stepup_submit(pid: str, body: StepUpIn, user: CurrentUser = Depends(ge
 @router.get("/problems/{pid}/stepup/submissions")
 async def stepup_submissions(pid: str, mission_seed: int | None = None,
                              user: CurrentUser = Depends(get_current_user)):
-    await _released_problem(pid, "stepup")        # 404 on a pre-release/unknown problem
+    await _released_problem(pid, "stepup", tester=user.is_tester)   # 404 on a pre-release/unknown problem
     if mission_seed is not None:
         rows = await db.fetch(
             """SELECT id, mission_seed, cost, valid, score, created_at
@@ -135,7 +137,7 @@ async def challenge_submit(
     clen = request.headers.get("content-length")
     if clen and clen.isdigit() and int(clen) > MAX_BODY:
         raise HTTPException(413, "request body exceeds the size limit (source 1MB + data.bin 10MB)")
-    p = await _problem_live(pid, "challenge")
+    p = await _problem_live(pid, "challenge", tester=user.is_tester)
     if language_id not in ENABLED_LANGUAGE_IDS:
         # never enqueue an unknown/disabled language: it can't compile/run on the
         # grader image and would burn a worker claim only to error out.
@@ -170,7 +172,7 @@ async def challenge_submissions(pid: str, user: CurrentUser = Depends(get_curren
     """The caller's OWN challenge submissions for a problem (newest first). The most
     recent one is what the next evaluation round grades (grade_round picks the latest
     per user); sample_results are the per-sample COSTS shown before the eval scores it."""
-    await _released_problem(pid, "challenge")     # 404 on a pre-release/unknown problem
+    await _released_problem(pid, "challenge", tester=user.is_tester)   # 404 on a pre-release/unknown problem
     # `user_id=$2` is the ownership guard (own rows only). Deliberately does NOT select
     # source_text / data_bin — a list view never ships the code or the uploaded blob.
     rows = await db.fetch(

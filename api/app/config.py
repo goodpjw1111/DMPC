@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # self-provision admin without a manual SQL step. Override via ADMIN_EMAILS.
     admin_emails: str = "goodpjw2008@dimigo.hs.kr,goodpjw1111@gmail.com"
 
+    # --- testers ----------------------------------------------------------
+    # Emails that may access TESTER-ONLY (draft) contests — create/preview a new problem
+    # mid-contest without exposing it to participants. Admins are testers too. Override
+    # via TESTER_EMAILS.
+    tester_emails: str = "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com"
+
     # --- Google OIDC ------------------------------------------------------
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -99,6 +105,10 @@ class Settings(BaseSettings):
     @property
     def allow_email_set(self) -> set[str]:
         return {e.strip().lower() for e in self.allow_emails.split(",") if e.strip()}
+
+    @property
+    def tester_email_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.tester_emails.split(",") if e.strip()}
 
     @property
     def ip_pepper(self) -> str:

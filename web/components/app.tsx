@@ -21,7 +21,7 @@ import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
-  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest,
+  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
 } from "@/lib/api";
@@ -754,6 +754,11 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
     try { await endContest(c.id); showToast("대회를 종료했습니다", "최종 평가 채점 후(evals 실행/자동) 랭킹·리플레이가 열립니다"); const d = await getContestDetail(c.id); setDetail(d); }
     catch (e: any) { showToast("종료 실패", String(e?.message ?? e)); }
   }
+  async function publishNow() {
+    if (typeof window !== "undefined" && !window.confirm("이 초안을 공개(live)로 전환할까요? 이후 모든 참가자에게 보입니다.")) return;
+    try { await publishContest(c.id); showToast("대회를 공개했습니다", "이제 진행 중(live) — 참가자에게 보입니다"); const d = await getContestDetail(c.id); setDetail(d); }
+    catch (e: any) { showToast("공개 실패", String(e?.message ?? e)); }
+  }
   const podium: Podium[] = (standings ?? []).filter((s) => s.rank != null && s.rank <= 3)
     .map((s) => ({ rank: s.rank as number, nick: s.nickname, score: s.score, me: !!nick && s.nickname === nick }));
 
@@ -768,10 +773,17 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
 
   return <div className="wrap">
     <Link href="/" className="back">← 모의고사 목록</Link>
+    {detail.status === "draft" && <div className="center" style={{ margin: "10px 0 0" }}><span className="pill" style={{ background: "var(--line2)", color: "var(--fg)" }}>🧪 테스터 전용 초안 (비공개)</span></div>}
     <h2 className="center muted" style={{ margin: "18px 0 8px" }}>예상 총점 <span style={{ fontSize: 12, fontWeight: 400 }}>(스텝업 20% + 챌린지 80%)</span></h2>
     <Bar g={detail.total} t={1000000} />
     <div style={{ margin: "14px 0 18px" }}><RuleBanner /></div>
-    {isAdmin && !ended && <div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
+    {isAdmin && detail.status === "draft" && <div className="card" style={{ marginBottom: 12, borderColor: "var(--line2)" }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span className="muted" style={{ fontSize: 12 }}>🧪 <b>테스터 전용 초안</b> — 테스터/관리자만 보입니다. 검증을 마치면 공개하세요.</span>
+        <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} onClick={publishNow}>공개로 전환</button>
+      </div>
+    </div>}
+    {isAdmin && !ended && detail.status !== "draft" && <div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
       <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} onClick={endNow}>🏁 대회 종료 (관리자)</button>
     </div>}
     {reg && <RegistrationCard registered={reg.registered} count={reg.count} open={reg.open} busy={regBusy} onToggle={toggleReg} />}
@@ -1139,6 +1151,7 @@ export function CreateContestView() {
   const [templates, setTemplates] = useState<ProblemTemplate[] | null>(null);
   const [problemKey, setProblemKey] = useState("clean_robot");
   const [startNow, setStartNow] = useState(false);
+  const [draftMode, setDraftMode] = useState(false);   // tester-only private draft
   const [missions, setMissions] = useState<StepCase[]>([]);   // Step Up: per-case features + scores
   const [useSubtasks, setUseSubtasks] = useState(false);      // Challenge: condition-based subtasks
   const [chSubtasks, setChSubtasks] = useState<{ name: string; features: Record<string, number[]>; seedLo: number; seedHi: number; budget: number }[]>([]);
@@ -1246,7 +1259,7 @@ export function CreateContestView() {
       setCreating(true);
       try {
         const r = await createContest({
-          title: title.trim(), problem_key: problemKey, start_now: startNow,
+          title: title.trim(), problem_key: problemKey, start_now: startNow, draft: draftMode,
           gen_params: { hMin: gen.hMin, hMax: gen.hMax, wMin: gen.wMin, wMax: gen.wMax, dMin: gen.dMin, dMax: gen.dMax },
           stepup: useMissions
             ? { statement_md: statement, missions, time_limit_ms: timeMs, memory_limit_mb: memMb }
@@ -1256,7 +1269,7 @@ export function CreateContestView() {
                 subtasks: chSubtasks.map((s) => ({ name: s.name, features: s.features, seed_lo: s.seedLo, seed_hi: s.seedHi, budget: s.budget })) }
             : { statement_md: chStatement, seed_range: [seedLo, seedHi], round_seeds: roundSeeds, cost_eps: costEps, time_limit_ms: timeMs, memory_limit_mb: memMb },
         });
-        showToast(`'${title.trim()}' 모의고사를 만들었습니다`, r.status === "live" ? "지금 바로 진행 중(테스트) — 제출 가능" : `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
+        showToast(`'${title.trim()}' 모의고사를 만들었습니다`, r.status === "draft" ? "테스터 전용 초안 — 테스터/관리자만 볼 수 있어요 (검증 후 공개)" : r.status === "live" ? "지금 바로 진행 중(테스트) — 제출 가능" : `시작 ${r.starts_at.slice(0, 10)} · 종료 ${r.ends_at.slice(0, 10)} (예약됨)`);
         router.push(`/c/${r.id}`);
       } catch (e: any) {
         showToast("대회 생성 실패", String(e?.message ?? e));
@@ -1336,6 +1349,10 @@ export function CreateContestView() {
       <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 12, cursor: "pointer", fontSize: 13 }}>
         <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} />
         <span><b>지금 시작 (테스트용)</b> — 일정 규칙을 건너뛰고 <b>즉시 진행(live)</b>으로 만들어 바로 제출·채점을 확인합니다.</span>
+      </label>
+      <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 6, cursor: "pointer", fontSize: 13 }}>
+        <input type="checkbox" checked={draftMode} onChange={(e) => setDraftMode(e.target.checked)} />
+        <span><b>테스터 전용 (초안)</b> — <b>테스터/관리자에게만</b> 보이는 비공개 초안으로 저장. 진행 중인 대회 중에 새 문제를 몰래 테스트할 때 사용하고, 검증 후 "공개로 전환". (지금 시작보다 우선)</span>
       </label>
     </div>}
     <div className="card" style={{ marginBottom: 16 }}>

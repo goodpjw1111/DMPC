@@ -72,7 +72,7 @@ export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
 }
 
 // ---- typed shapes returned by the API (match api/app/routers) ----
-export type Me = { id: string; email: string; nickname: string | null; needs_nickname: boolean; role: string };
+export type Me = { id: string; email: string; nickname: string | null; needs_nickname: boolean; role: string; is_tester?: boolean };
 export type ApiContest = { id: string; title: string; status: string; starts_at: string; ends_at: string };
 export type ApiProblemRef = { id: string; kind: "stepup" | "challenge"; title: string; score: number };
 export type ApiContestDetail = ApiContest & {
@@ -149,6 +149,7 @@ export type CreateContestPayload = {
   title: string;
   problem_key: string;
   start_now?: boolean;
+  draft?: boolean;
   gen_params: GenParamsPayload;
   stepup: { statement_md: string; given_seeds?: number[]; missions?: { seed: number; score: number; features: Record<string, number> }[]; time_limit_ms: number; memory_limit_mb: number };
   challenge: { statement_md: string; seed_range: [number, number]; round_seeds: number; cost_eps: number; subtasks?: { name: string; features: Record<string, number[]>; seed_lo: number; seed_hi: number; budget: number }[]; time_limit_ms: number; memory_limit_mb: number };
@@ -159,6 +160,8 @@ export const evaluateNow = (cid: string) =>
   apiPost<{ round_id: string; scheduled_at: string }>(`/api/admin/contests/${cid}/evaluate-now`);
 export const endContest = (cid: string) =>
   apiPost<{ status: string; final_round_id: string; ends_at: string }>(`/api/admin/contests/${cid}/end`);
+export const publishContest = (cid: string) =>
+  apiPost<{ status: string; starts_at: string; ends_at: string }>(`/api/admin/contests/${cid}/publish`);
 
 // ---- replays (winners' writeups / 시상) ----
 export type Replay = {

@@ -32,26 +32,29 @@ def _as_dict(v) -> dict:
 _RELEASED = ("live", "ended", "archived")
 
 
-async def _released_problem(pid: str):
-    """Fetch a problem ONLY if its contest is released (started). 404 otherwise —
-    closes the pre-start data-leak / IDOR: knowing a problem UUID is not enough."""
+async def _released_problem(pid: str, *, allow_unreleased: bool = False):
+    """Fetch a problem ONLY if its contest is released (started) — or, when
+    `allow_unreleased` (a tester), even a draft/scheduled one so testers can preview a
+    new problem in private. 404 otherwise — closes the pre-start data-leak / IDOR."""
     p = await db.fetchrow(
         """SELECT p.*, c.status AS contest_status FROM problems p
            JOIN contests c ON c.id = p.contest_id WHERE p.id = $1""",
         pid,
     )
-    if not p or p["contest_status"] not in _RELEASED:
+    if not p or (p["contest_status"] not in _RELEASED and not allow_unreleased):
         raise HTTPException(404, "not found")
     return p
 
 
 @router.get("/contests")
 async def list_contests(user: CurrentUser = Depends(get_current_user)):
+    # testers also see TESTER-ONLY (draft) contests; everyone else: non-draft only.
     rows = await db.fetch(
         """
         SELECT id, title, status, starts_at, ends_at
-        FROM contests WHERE status <> 'draft' ORDER BY starts_at DESC
-        """
+        FROM contests WHERE status <> 'draft' OR $1 ORDER BY starts_at DESC
+        """,
+        user.is_tester,
     )
     return [dict(r) for r in rows]
 
@@ -81,7 +84,7 @@ async def _last_challenge_score(cid: str, user_id: str) -> int:
 
 @router.get("/contests/{cid}")
 async def contest_detail(cid: str, user: CurrentUser = Depends(get_current_user)):
-    c = await db.fetchrow("SELECT * FROM contests WHERE id=$1 AND status<>'draft'", cid)
+    c = await db.fetchrow("SELECT * FROM contests WHERE id=$1 AND (status<>'draft' OR $2)", cid, user.is_tester)
     if not c:
         raise HTTPException(404, "not found")
     problems = await db.fetch(
@@ -114,19 +117,20 @@ async def standings(cid: str, user: CurrentUser = Depends(get_current_user)):
     c = await db.fetchrow("SELECT ends_at FROM contests WHERE id=$1", cid)
     if not c:
         raise HTTPException(404, "not found")
-    assert_contest_ended(c["ends_at"])      # 403 until the contest ends
-    # `standings` is per-evaluation-round (UNIQUE(round_id,user_id)); a multi-day
-    # contest has many rounds. Scope to the SINGLE final round that is fully graded
-    # (status='done'), else every user appears once per round with stale ranks, or a
-    # half-written/failed final round surfaces blank. Empty until the final commits.
+    if not user.is_tester:
+        assert_contest_ended(c["ends_at"])      # 403 until the contest ends (testers preview anytime)
+    # `standings` is per-evaluation-round (UNIQUE(round_id,user_id)); a multi-day contest
+    # has many rounds. For a real contest, scope to the SINGLE final round that is fully
+    # graded; for a tester preview, the latest done round (any type) so the ranking can
+    # be checked mid-test without ending the (draft) contest.
+    final_only = "" if user.is_tester else "AND type='final' "
     rows = await db.fetch(
-        """SELECT u.nickname, s.total_score, s.rank
+        f"""SELECT u.nickname, s.total_score, s.rank
            FROM standings s JOIN users u ON u.id=s.user_id
            WHERE s.contest_id=$1
              AND s.round_id = (
                  SELECT id FROM evaluation_rounds
-                 WHERE contest_id=$1 AND type='final'
-                   AND status='done' AND published_at IS NOT NULL
+                 WHERE contest_id=$1 {final_only}AND status='done' AND published_at IS NOT NULL
                  ORDER BY scheduled_at DESC LIMIT 1
              )
            ORDER BY s.rank NULLS LAST, s.total_score DESC""",
@@ -144,7 +148,7 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
     # gate on _RELEASED (contest actually started), consistent with _released_problem —
     # not merely 'not a draft', so a not-yet-started contest never serves round data.
     c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
-    if not c or c["status"] not in _RELEASED:
+    if not c or (c["status"] not in _RELEASED and not user.is_tester):
         raise HTTPException(404, "not found")
     rnd = await db.fetchrow(
         """SELECT id, type, scheduled_at, published_at FROM evaluation_rounds
@@ -196,7 +200,7 @@ def _example_io(mod, meta: dict) -> tuple[str | None, str | None]:
 
 @router.get("/problems/{pid}")
 async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)):
-    p = await _released_problem(pid)
+    p = await _released_problem(pid, allow_unreleased=user.is_tester)
     mod = load_problem(p["problem_key"])
     meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))   # authored seeds/budget/params
     base = {
@@ -224,7 +228,7 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
 
 @router.get("/problems/{pid}/missions/{seed}/input")
 async def mission_input(pid: str, seed: int, user: CurrentUser = Depends(get_current_user)):
-    p = await _released_problem(pid)
+    p = await _released_problem(pid, allow_unreleased=user.is_tester)
     if p["kind"] != "stepup":
         raise HTTPException(404, "not found")
     mod = load_problem(p["problem_key"])

@@ -64,6 +64,7 @@ type Store = {
   apiMode: boolean;
   authState: AuthState;
   isAdmin: boolean;               // gate admin-only UI (create); mock mode = true (demo)
+  isTester: boolean;              // may access tester-only (draft) contests
   loginUrl: () => string;
   nick: string | null;
   setNick: (n: string) => void;
@@ -109,6 +110,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [apiMode, setApiMode] = useState(false);
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isTester, setIsTester] = useState(false);
   const [nick, setNickState] = useState<string | null>(null);
   const [contests, setContests] = useState<Contest[]>(CONTESTS);
   const [notifs, setNotifs] = useState<Notif[]>(INITIAL_NOTIFS);
@@ -127,6 +129,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         try {
           const me = await getMe();           // 401 -> Unauthorized -> show login
           setIsAdmin(me.role === "admin");
+          setIsTester(!!me.is_tester);
           if (me.needs_nickname) { setNickState(null); setAuthState("nickname"); }
           else { setNickState(me.nickname); setAuthState("ready"); }
           try { setContests((await getContests()).map(mapApiContest)); } catch { /* keep empty */ }
@@ -162,6 +165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     } catch {}
     setIsAdmin(true);              // mock demo has no auth — let the operator try authoring
+    setIsTester(true);
     setAuthState("mock");
     setReady(true);
   }, []);
@@ -253,7 +257,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   const value: Store = {
-    ready, apiMode, authState, isAdmin, loginUrl,
+    ready, apiMode, authState, isAdmin, isTester, loginUrl,
     nick, setNick, contests, addContest, notifs,
     unseen: Math.max(0, notifs.length - seen),
     markNotifsSeen, refreshNotifs,

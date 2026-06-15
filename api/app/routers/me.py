@@ -23,6 +23,7 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         "nickname": user.nickname,
         "needs_nickname": user.nickname is None,   # first-login -> show setup screen
         "role": user.role,
+        "is_tester": user.is_tester,               # may access tester-only (draft) contests
     }
 
 
