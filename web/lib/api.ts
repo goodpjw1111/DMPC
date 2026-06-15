@@ -157,20 +157,29 @@ export const createContest = (payload: CreateContestPayload) =>
   apiPost<{ id: string; status: string; starts_at: string; ends_at: string }>("/api/admin/contests", payload);
 export const evaluateNow = (cid: string) =>
   apiPost<{ round_id: string; scheduled_at: string }>(`/api/admin/contests/${cid}/evaluate-now`);
+export const endContest = (cid: string) =>
+  apiPost<{ status: string; final_round_id: string; ends_at: string }>(`/api/admin/contests/${cid}/end`);
 
 // ---- replays (winners' writeups / 시상) ----
 export type Replay = {
   id: string; nickname: string; rank: number | null; body: string;
+  has_pdf?: boolean; pdf_name?: string | null;
   is_shared: boolean; moderated: boolean; is_mine: boolean; created_at: string;
 };
 export type MyReplay = {
   eligible: boolean; rank: number | null;
-  replay: { body: string; is_shared: boolean; moderated: boolean } | null;
+  replay: { body: string; has_pdf: boolean; pdf_name: string | null; is_shared: boolean; moderated: boolean } | null;
 };
 export const getReplays = (cid: string) => apiGet<Replay[]>(`/api/contests/${cid}/replays`);
 export const getMyReplay = (cid: string) => apiGet<MyReplay>(`/api/contests/${cid}/replay/me`);
-export const postReplay = (cid: string, body: string, is_shared: boolean) =>
-  apiPost<{ id: string; moderated: boolean; is_shared: boolean }>(`/api/contests/${cid}/replay`, { body, is_shared });
+export const postReplay = (cid: string, body: string, is_shared: boolean, pdf?: File | null) => {
+  const fd = new FormData();
+  fd.set("body", body);
+  fd.set("is_shared", String(is_shared));
+  if (pdf) fd.set("pdf", pdf, pdf.name);
+  return apiPostForm<{ id: string; moderated: boolean; is_shared: boolean }>(`/api/contests/${cid}/replay`, fd);
+};
+export const replayPdfUrl = (cid: string, rid: string) => `${API_BASE}/api/contests/${cid}/replays/${rid}/pdf`;
 export const moderateReplay = (rid: string, moderated: boolean) =>
   apiPost<{ id: string; moderated: boolean }>(`/api/admin/replays/${rid}/moderate`, { moderated });
 

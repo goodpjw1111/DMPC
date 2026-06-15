@@ -285,3 +285,32 @@ async def evaluate_now(cid: str, user: CurrentUser = Depends(require_admin)):
     )
     await ci_dispatch.fire("evals")          # run the grader NOW (no-op unless configured)
     return {"round_id": str(row["id"]), "scheduled_at": now.isoformat()}
+
+
+@router.post("/contests/{cid}/end")
+async def end_contest(cid: str, user: CurrentUser = Depends(require_admin)):
+    """Admin: end a contest NOW and (re)grade its FINAL round so the ranking tab and
+    replays open. Sets status='ended' + ends_at=now, then enqueues/refreshes the single
+    type='final' round; the grader publishes it -> final standings (the ranking)."""
+    c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
+    if not c:
+        raise HTTPException(404, "대회를 찾을 수 없습니다")
+    now = datetime.now(KST)
+    idem = f"{cid}:{now.date().isoformat()}:final"
+    async with db.pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("UPDATE contests SET status='ended', ends_at=$2 WHERE id=$1", cid, now)
+            existing = await conn.fetchrow(
+                "SELECT id FROM evaluation_rounds WHERE contest_id=$1 AND type='final'", cid)
+            if existing:                      # re-grade the existing final (only one per contest)
+                rid = existing["id"]
+                await conn.execute(
+                    "UPDATE evaluation_rounds SET status='pending', scheduled_at=$2, claimed_at=NULL, "
+                    "claimed_by=NULL, attempts=0, published_at=NULL WHERE id=$1", rid, now)
+            else:
+                row = await conn.fetchrow(
+                    "INSERT INTO evaluation_rounds (contest_id, type, idem_key, scheduled_at, status) "
+                    "VALUES ($1,'final',$2,$3,'pending') RETURNING id", cid, idem, now)
+                rid = row["id"]
+    await ci_dispatch.fire("evals")
+    return {"status": "ended", "final_round_id": str(rid), "ends_at": now.isoformat()}

@@ -14,8 +14,8 @@ only XSS defense.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from pydantic import BaseModel
 
 from .. import db
 from ..deps import (
@@ -25,6 +25,7 @@ from ..deps import (
 router = APIRouter(prefix="/api", tags=["replays"])
 
 MAX_BODY = 20_000          # a writeup, not a thesis
+MAX_PDF = 10_000_000       # 10 MB PDF writeup cap
 TOP_N = 3                  # only the podium may post a 시상 writeup
 
 
@@ -72,8 +73,8 @@ async def list_replays(cid: str, user: CurrentUser = Depends(get_current_user)):
     c = await _contest_or_404(cid)
     assert_contest_ended(c["ends_at"])      # 403 until the contest ends
     rows = await db.fetch(
-        f"""SELECT r.id, r.user_id, r.body_md, r.is_shared, r.moderated, r.created_at,
-                   u.nickname, s.rank
+        f"""SELECT r.id, r.user_id, r.body_md, (r.pdf IS NOT NULL) AS has_pdf, r.pdf_name,
+                   r.is_shared, r.moderated, r.created_at, u.nickname, s.rank
             FROM replays r
             JOIN users u ON u.id = r.user_id
             LEFT JOIN standings s
@@ -85,7 +86,8 @@ async def list_replays(cid: str, user: CurrentUser = Depends(get_current_user)):
         cid, user.id,
     )
     return [{"id": str(r["id"]), "nickname": r["nickname"], "rank": r["rank"],
-             "body": r["body_md"], "is_shared": r["is_shared"], "moderated": r["moderated"],
+             "body": r["body_md"], "has_pdf": r["has_pdf"], "pdf_name": r["pdf_name"],
+             "is_shared": r["is_shared"], "moderated": r["moderated"],
              "is_mine": str(r["user_id"]) == user.id,
              "created_at": r["created_at"].isoformat()} for r in rows]
 
@@ -96,44 +98,74 @@ async def my_replay(cid: str, user: CurrentUser = Depends(get_current_user)):
     c = await _contest_or_404(cid)
     rank = await _final_rank(cid, user.id)
     r = await db.fetchrow(
-        "SELECT body_md, is_shared, moderated FROM replays WHERE contest_id=$1 AND user_id=$2",
+        "SELECT body_md, (pdf IS NOT NULL) AS has_pdf, pdf_name, is_shared, moderated "
+        "FROM replays WHERE contest_id=$1 AND user_id=$2",
         cid, user.id,
     )
     ended = c["status"] in ("ended", "archived")
     return {
         "eligible": ended and is_eligible_rank(rank),
         "rank": rank,
-        "replay": (None if not r else {"body": r["body_md"], "is_shared": r["is_shared"],
+        "replay": (None if not r else {"body": r["body_md"], "has_pdf": r["has_pdf"],
+                                       "pdf_name": r["pdf_name"], "is_shared": r["is_shared"],
                                        "moderated": r["moderated"]}),
     }
 
 
-class ReplayIn(BaseModel):
-    body: str = Field(max_length=MAX_BODY + 1000)   # hard cap; validate_body trims/limits
-    is_shared: bool = False
-
-
 @router.post("/contests/{cid}/replay")
-async def upsert_replay(cid: str, body: ReplayIn, user: CurrentUser = Depends(get_current_user)):
-    """Create/replace the caller's own replay. Requires: contest ended + final top-3.
-    Any write resets moderation (an edited writeup must be re-approved to stay public)."""
+async def upsert_replay(cid: str, user: CurrentUser = Depends(get_current_user),
+                        body: str = Form(""), is_shared: bool = Form(False),
+                        pdf: UploadFile | None = File(None)):
+    """Create/replace the caller's replay — a text note and/or a PDF writeup. Requires:
+    contest ended + final top-3. Any write resets moderation. On an edit, an EXISTING PDF
+    is kept unless a new one is uploaded."""
     c = await _contest_or_404(cid)
     if c["status"] not in ("ended", "archived"):
         raise HTTPException(403, "대회가 종료된 뒤에 작성할 수 있습니다")
     rank = await _final_rank(cid, user.id)
     if not is_eligible_rank(rank):
         raise HTTPException(403, "최종 상위 3위만 풀이를 공유할 수 있습니다")
-    text = validate_body(body.body)
+    text = (body or "").strip()
+    if len(text) > MAX_BODY:
+        raise HTTPException(400, f"내용이 너무 깁니다 (최대 {MAX_BODY}자)")
+    pdf_bytes = await pdf.read() if pdf is not None else None
+    if pdf_bytes is not None:
+        if len(pdf_bytes) > MAX_PDF:
+            raise HTTPException(413, "PDF가 10MB를 초과합니다")
+        if not pdf_bytes.startswith(b"%PDF-"):
+            raise HTTPException(400, "PDF 파일이 아닙니다")
+    pdf_name = (pdf.filename[:200] if pdf is not None and pdf.filename else None)
+    existing = await db.fetchrow(
+        "SELECT (pdf IS NOT NULL) AS h FROM replays WHERE contest_id=$1 AND user_id=$2", cid, user.id)
+    if not text and pdf_bytes is None and not (existing and existing["h"]):
+        raise HTTPException(400, "텍스트 또는 PDF 중 하나는 필요합니다")
     row = await db.fetchrow(
-        """INSERT INTO replays (contest_id, user_id, body_md, is_shared, moderated)
-           VALUES ($1,$2,$3,$4,false)
+        """INSERT INTO replays (contest_id, user_id, body_md, pdf, pdf_name, is_shared, moderated)
+           VALUES ($1,$2,$3,$4,$5,$6,false)
            ON CONFLICT (contest_id, user_id) DO UPDATE
-               SET body_md = EXCLUDED.body_md, is_shared = EXCLUDED.is_shared,
-                   moderated = false              -- re-moderate on every edit
+               SET body_md = EXCLUDED.body_md, is_shared = EXCLUDED.is_shared, moderated = false,
+                   pdf = COALESCE(EXCLUDED.pdf, replays.pdf),
+                   pdf_name = COALESCE(EXCLUDED.pdf_name, replays.pdf_name)
            RETURNING id""",
-        cid, user.id, text, body.is_shared,
+        cid, user.id, text, pdf_bytes, pdf_name, is_shared,
     )
-    return {"id": str(row["id"]), "moderated": False, "is_shared": body.is_shared}
+    return {"id": str(row["id"]), "moderated": False, "is_shared": is_shared}
+
+
+@router.get("/contests/{cid}/replays/{rid}/pdf")
+async def replay_pdf(cid: str, rid: str, user: CurrentUser = Depends(get_current_user)):
+    """Serve a replay's PDF — to the owner, or to anyone once shared+moderated+ended."""
+    r = await db.fetchrow(
+        """SELECT r.user_id, r.pdf, r.is_shared, r.moderated, c.status
+             FROM replays r JOIN contests c ON c.id = r.contest_id
+            WHERE r.id=$1 AND r.contest_id=$2""", rid, cid)
+    if not r or r["pdf"] is None:
+        raise HTTPException(404, "not found")
+    ended = r["status"] in ("ended", "archived")
+    if not (str(r["user_id"]) == user.id or (r["is_shared"] and r["moderated"] and ended)):
+        raise HTTPException(404, "not found")
+    return Response(bytes(r["pdf"]), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="replay.pdf"'})
 
 
 class ModerateIn(BaseModel):

@@ -20,8 +20,8 @@ import { registerSimulator, getSimulator } from "@/lib/simulators";
 import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
-  getReplays, getMyReplay, postReplay, moderateReplay,
-  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow,
+  getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
+  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
 } from "@/lib/api";
@@ -622,7 +622,7 @@ const fmtAt = (iso: string) => {
 
 // ===== replays / 시상 (winners' writeups) — used by both mock & API detail =====
 type Podium = { rank: number; nick: string; score: number; me?: boolean };
-type ReplayView = { id: string; nickname: string; rank: number | null; body: string; is_shared: boolean; moderated: boolean; is_mine: boolean };
+type ReplayView = { id: string; nickname: string; rank: number | null; body: string; has_pdf?: boolean; is_shared: boolean; moderated: boolean; is_mine: boolean };
 
 // user-generated -> render as ESCAPED plain text (React escapes; no HTML/markdown), so
 // a shared writeup can never inject script. Line breaks preserved.
@@ -630,25 +630,33 @@ function ReplayBody({ text }: { text: string }) {
   return <div style={{ whiteSpace: "pre-wrap", fontSize: 14, lineHeight: 1.7, color: "var(--fg)" }}>{text}</div>;
 }
 
-function ReplayEditor({ initial, onSave }: { initial: MyReplay["replay"]; onSave: (body: string, share: boolean) => Promise<void> }) {
+function ReplayEditor({ initial, onSave }: { initial: MyReplay["replay"]; onSave: (body: string, share: boolean, pdf: File | null) => Promise<void> }) {
   const [body, setBody] = useState(initial?.body ?? "");
   const [share, setShare] = useState(initial?.is_shared ?? false);
+  const [pdf, setPdf] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const hasExistingPdf = !!initial?.has_pdf;
+  const canSave = !!body.trim() || !!pdf || hasExistingPdf;
   return <div className="card" style={{ marginBottom: 16 }}>
     <b>🏅 내 풀이 공유 <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(최종 상위 3위)</span></b>
-    {initial && <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>현재 상태: {initial.is_shared ? (initial.moderated ? "✓ 공개 승인됨" : "검토 대기 중 (관리자 승인 후 공개)") : "비공개"}</p>}
-    <textarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="접근 방법·핵심 아이디어를 적어주세요 (서식 없는 텍스트, 최대 20,000자)" style={{ marginTop: 8 }} />
+    {initial && <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>현재 상태: {initial.is_shared ? (initial.moderated ? "✓ 공개 승인됨" : "검토 대기 중 (관리자 승인 후 공개)") : "비공개"}{hasExistingPdf && " · PDF 첨부됨"}</p>}
+    <textarea rows={5} value={body} onChange={(e) => setBody(e.target.value)} placeholder="접근 방법·핵심 아이디어 (선택 — 서식 없는 텍스트, 최대 20,000자)" style={{ marginTop: 8 }} />
+    <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <label className="btn ghost" style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>📄 PDF 첨부
+        <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} onChange={(e) => setPdf(e.target.files?.[0] ?? null)} /></label>
+      <span className="muted" style={{ fontSize: 12 }}>{pdf ? pdf.name : (hasExistingPdf ? "기존 PDF 유지 (새로 올리면 교체)" : "PDF 보고서 (선택, ≤10MB)")}</span>
+    </div>
     <div className="row" style={{ justifyContent: "space-between", marginTop: 8, flexWrap: "wrap", gap: 8 }}>
       <label className="row" style={{ gap: 6, fontSize: 13, cursor: "pointer" }}><input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} /> 다른 참가자에게 공개 (관리자 승인 후)</label>
-      <button className="btn" disabled={busy || !body.trim()} onClick={async () => { setBusy(true); try { await onSave(body, share); } finally { setBusy(false); } }}>{busy ? "저장 중…" : "저장"}</button>
+      <button className="btn" disabled={busy || !canSave} onClick={async () => { setBusy(true); try { await onSave(body, share, pdf); } finally { setBusy(false); } }}>{busy ? "저장 중…" : "저장"}</button>
     </div>
-    <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>편집하면 다시 검토가 필요합니다. 풀이는 안전을 위해 <b>서식 없는 텍스트</b>로 표시됩니다.</p>
+    <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>텍스트·PDF 중 하나 이상. 편집하면 다시 검토가 필요합니다. 텍스트는 안전을 위해 <b>서식 없는 텍스트</b>로 표시됩니다.</p>
   </div>;
 }
 
-function ReplayShowcase({ podium, replays, myReplay, isAdmin, onSave, onModerate }: {
-  podium: Podium[]; replays: ReplayView[]; myReplay?: MyReplay | null; isAdmin?: boolean;
-  onSave?: (body: string, share: boolean) => Promise<void>; onModerate?: (id: string, moderated: boolean) => void;
+function ReplayShowcase({ cid, podium, replays, myReplay, isAdmin, onSave, onModerate }: {
+  cid?: string; podium: Podium[]; replays: ReplayView[]; myReplay?: MyReplay | null; isAdmin?: boolean;
+  onSave?: (body: string, share: boolean, pdf: File | null) => Promise<void>; onModerate?: (id: string, moderated: boolean) => void;
 }) {
   const medal = (r: number | null) => (r != null && r >= 1 && r <= 3 ? ["🥇", "🥈", "🥉"][r - 1] : (r ?? "-"));
   return <div style={{ marginTop: 30 }}>
@@ -672,7 +680,8 @@ function ReplayShowcase({ podium, replays, myReplay, isAdmin, onSave, onModerate
           {isAdmin && onModerate && <button className="btn ghost" style={{ padding: "3px 8px" }} onClick={() => onModerate(r.id, !r.moderated)}>{r.moderated ? "비공개로" : "승인"}</button>}
         </span>
       </div>
-      <ReplayBody text={r.body} />
+      {r.body && <ReplayBody text={r.body} />}
+      {r.has_pdf && cid && <a className="btn ghost" style={{ padding: "5px 12px", fontSize: 13, marginTop: r.body ? 8 : 0, display: "inline-block" }} href={replayPdfUrl(cid, r.id)} target="_blank" rel="noreferrer">📄 PDF 풀이 보기 / 다운로드</a>}
     </div>) : <p className="muted">아직 공개된 풀이가 없습니다.</p>}
   </div>;
 }
@@ -732,13 +741,18 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
       .catch((e) => { setStErr(String(e?.message ?? e)); setStState("error"); });
     loadReplays();
   }
-  async function saveReplay(body: string, share: boolean) {
-    try { await postReplay(c.id, body, share); showToast("풀이를 저장했습니다", share ? "공개는 관리자 승인 후 반영됩니다" : "비공개로 저장됨"); loadReplays(); }
+  async function saveReplay(body: string, share: boolean, pdf: File | null) {
+    try { await postReplay(c.id, body, share, pdf); showToast("풀이를 저장했습니다", share ? "공개는 관리자 승인 후 반영됩니다" : "비공개로 저장됨"); loadReplays(); }
     catch (e: any) { showToast("저장 실패", String(e?.message ?? e)); }
   }
   function moderate(id: string, moderated: boolean) {
     moderateReplay(id, moderated).then(() => { showToast(moderated ? "공개 승인했습니다" : "비공개로 전환했습니다"); loadReplays(); })
       .catch((e) => showToast("처리 실패", String(e?.message ?? e)));
+  }
+  async function endNow() {
+    if (typeof window !== "undefined" && !window.confirm("대회를 지금 종료할까요? 최종 평가를 채점하고 랭킹·리플레이를 공개합니다.")) return;
+    try { await endContest(c.id); showToast("대회를 종료했습니다", "최종 평가 채점 후(evals 실행/자동) 랭킹·리플레이가 열립니다"); const d = await getContestDetail(c.id); setDetail(d); }
+    catch (e: any) { showToast("종료 실패", String(e?.message ?? e)); }
   }
   const podium: Podium[] = (standings ?? []).filter((s) => s.rank != null && s.rank <= 3)
     .map((s) => ({ rank: s.rank as number, nick: s.nickname, score: s.score, me: !!nick && s.nickname === nick }));
@@ -757,6 +771,9 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
     <h2 className="center muted" style={{ margin: "18px 0 8px" }}>예상 총점 <span style={{ fontSize: 12, fontWeight: 400 }}>(스텝업 20% + 챌린지 80%)</span></h2>
     <Bar g={detail.total} t={1000000} />
     <div style={{ margin: "14px 0 18px" }}><RuleBanner /></div>
+    {isAdmin && !ended && <div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
+      <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} onClick={endNow}>🏁 대회 종료 (관리자)</button>
+    </div>}
     {reg && <RegistrationCard registered={reg.registered} count={reg.count} open={reg.open} busy={regBusy} onToggle={toggleReg} />}
     {ended && <div className="tabs" style={{ justifyContent: "center", margin: "6px 0 20px" }}>
       <button className={"tab" + (tab !== "ranking" ? " active" : "")} onClick={() => setTab("problems")}>문제</button>
@@ -774,7 +791,7 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
           <td>{r.nickname}{me && <span className="pill"> 나</span>}</td>
           <td style={{ textAlign: "right", paddingRight: 18 }}><b>{fmt(r.score)}</b></td></tr>; })}
       </tbody></table></div> : <p className="muted center">아직 최종 채점 결과가 집계되지 않았습니다.</p>)}
-      {stState === "done" && <ReplayShowcase podium={podium} replays={replays as ReplayView[]} myReplay={myReplay} isAdmin={isAdmin} onSave={saveReplay} onModerate={moderate} />}
+      {stState === "done" && <ReplayShowcase cid={c.id} podium={podium} replays={replays as ReplayView[]} myReplay={myReplay} isAdmin={isAdmin} onSave={saveReplay} onModerate={moderate} />}
     </> : <>
       <h2 className="center" style={{ marginBottom: 16 }}>문제 목록</h2>
       {hasStep && <Link href={`/c/${c.id}/stepup`} className="card" style={{ marginBottom: 14, display: "block", textDecoration: "none" }}>

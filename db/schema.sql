@@ -247,7 +247,9 @@ CREATE TABLE replays (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     contest_id    uuid NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
     user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    body_md       text NOT NULL,                -- rendered sanitized; never raw HTML
+    body_md       text NOT NULL DEFAULT '',     -- optional text note; rendered sanitized
+    pdf           bytea,                         -- optional PDF writeup (시상 보고서)
+    pdf_name      text,
     is_shared     boolean NOT NULL DEFAULT false,
     moderated     boolean NOT NULL DEFAULT false,
     -- enforced in API: only a verified final top-3 may insert; visible to others
