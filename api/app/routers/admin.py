@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from .. import db, grading
+from .. import ci_dispatch, db, grading
 from ..deps import CurrentUser, require_admin
 from ..schedule import KST, contest_window
 
@@ -283,4 +283,5 @@ async def evaluate_now(cid: str, user: CurrentUser = Depends(require_admin)):
            VALUES ($1, 'interim', $2, $3, 'pending') RETURNING id""",
         cid, f"manual:{now.isoformat()}", now,
     )
+    await ci_dispatch.fire("evals")          # run the grader NOW (no-op unless configured)
     return {"round_id": str(row["id"]), "scheduled_at": now.isoformat()}

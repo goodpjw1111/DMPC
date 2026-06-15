@@ -9,7 +9,7 @@ import sys
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from .. import db, grading
+from .. import ci_dispatch, db, grading
 from ..deps import CurrentUser, assert_owner, get_current_user
 
 # judge core (languages) — same path grading.py registers.
@@ -159,7 +159,9 @@ async def challenge_submit(
         hashlib.sha256(data_bin).hexdigest() if data_bin is not None else None,
         len(data_bin) if data_bin is not None else None,
     )
-    # the grader worker (separate host) picks this up via PG SKIP LOCKED.
+    # nudge the grader to run NOW (no-op unless GITHUB_DISPATCH_TOKEN is set); the worker
+    # also picks this up via PG SKIP LOCKED on the next scheduled tick regardless.
+    await ci_dispatch.fire("grade-samples")
     return {"submission_id": str(row["id"]), "state": "queued"}
 
 

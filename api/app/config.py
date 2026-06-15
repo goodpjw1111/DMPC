@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # --- data -------------------------------------------------------------
     database_url: str = "postgresql://dmpc:dmpc@localhost:5432/dmpc"
 
+    # --- CI dispatch (optional): auto-trigger grading workflows on submit/eval ----
+    github_dispatch_token: str = ""    # PAT (fine-grained Contents:write, or classic `repo`); empty = manual only
+    github_repo: str = ""              # "owner/name", e.g. goodpjw1111/DMPC
+
     # --- security headers -------------------------------------------------
     csp_report_only: bool = True
 

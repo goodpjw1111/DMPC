@@ -70,6 +70,8 @@ def run_over_seeds(box_id, problem, lang, source: bytes, seeds, base,
                                 capture_output=True, timeout=wall)
         except subprocess.TimeoutExpired:
             return ("", int(wall * 1000), "TLE")
+        except OSError:                       # missing interpreter/binary -> a run failure, not a crash
+            return ("", 0, "RE")
         ms = int((time.monotonic() - t0) * 1000)
         if cp.returncode != 0:
             return ("", ms, "RE")
