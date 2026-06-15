@@ -250,7 +250,14 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
     validate_create(body)
     # the client-side simulator comes from the problem module's META, not a hardcoded
     # value — a new problem ships its own simulator_key (or null = no in-browser sim).
-    sim_key = _template_meta(body.problem_key).get("simulator_key")
+    tmeta = _template_meta(body.problem_key)
+    sim_key = tmeta.get("simulator_key")
+    # the published statement follows the chosen problem: use the author's text, but fall
+    # back to the template's own META statement when they left it blank — so switching the
+    # template always yields the right 지문 even if the form didn't prefill it.
+    default_stmt = tmeta.get("statement_md", "")
+    su_statement = (body.stepup.statement_md or "").strip() or default_stmt
+    ch_statement = (body.challenge.statement_md or "").strip() or default_stmt
     # dates: normal contests follow the locked rule (register today -> start D+1 09:00 KST,
     # 3-day window). start_now is an admin TEST switch — create it live NOW for a 3-day window
     # so the whole submit→grade→standings flow can be exercised without waiting for tomorrow.
@@ -281,12 +288,12 @@ async def create_contest(body: CreateContestIn, user: CurrentUser = Depends(requ
             cid = c["id"]
             await conn.execute(
                 insert_problem, cid, "stepup", body.problem_key, f"{body.title} — 스텝 업",
-                body.stepup.statement_md, body.stepup.time_limit_ms, body.stepup.memory_limit_mb,
+                su_statement, body.stepup.time_limit_ms, body.stepup.memory_limit_mb,
                 sim_key, json.dumps(su_cfg),
             )
             await conn.execute(
                 insert_problem, cid, "challenge", body.problem_key, f"{body.title} — 챌린지",
-                body.challenge.statement_md, body.challenge.time_limit_ms, body.challenge.memory_limit_mb,
+                ch_statement, body.challenge.time_limit_ms, body.challenge.memory_limit_mb,
                 sim_key, json.dumps(ch_cfg),
             )
     return {"id": str(cid), "status": status,

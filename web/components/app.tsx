@@ -1337,10 +1337,10 @@ export function CreateContestView() {
   useEffect(() => {
     if (!apiMode || !curTemplate || lastTplKey.current === problemKey) return;
     lastTplKey.current = problemKey;
-    if (curTemplate.statement_md) {
-      setStatement(curTemplate.statement_md);
-      setChStatement(curTemplate.statement_md);
-    }
+    // always sync (even to "") so that if the template carries no statement the field is
+    // left blank -> the server fills it from the problem's own META (see create_contest).
+    setStatement(curTemplate.statement_md ?? "");
+    setChStatement(curTemplate.statement_md ?? "");
     if (curTemplate.time_limit_ms) setTimeMs(curTemplate.time_limit_ms);
     if (curTemplate.memory_limit_mb) setMemMb(curTemplate.memory_limit_mb);
     if (curTemplate.title) setDesc(curTemplate.title);
