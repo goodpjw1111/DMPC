@@ -209,7 +209,9 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
         "statement_md": p["statement_md"], "time_limit_ms": p["time_limit_ms"],
         "memory_limit_mb": p["memory_limit_mb"], "simulator_key": p["simulator_key"],
     }
-    base["example_input"], base["example_output"] = _example_io(mod, meta, p["kind"])
+    # NOTE: the example I/O is NOT computed here — generating it (and, for Step Up, solving it)
+    # can take seconds, which would block the statement. It's served lazily + cached by the
+    # /example endpoint below, so the statement renders immediately.
     if p["kind"] == "stepup":
         seeds = meta.get("given_seeds") or []
         budgets = (mission_budgets(meta) if meta.get("stepup_missions")
@@ -233,6 +235,27 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
             for i, s in enumerate(subs)
         ]
     return base
+
+
+# Example I/O is deterministic per problem and can be expensive to build (generate +, for
+# Step Up, the optimal solve), so cache it per problem id and serve it OUTSIDE problem_detail
+# — the statement loads instantly; the example fills in a moment later.
+_EXAMPLE_CACHE: dict[str, dict] = {}
+
+
+@router.get("/problems/{pid}/example")
+async def problem_example(pid: str, user: CurrentUser = Depends(get_current_user)):
+    p = await _released_problem(pid, allow_unreleased=user.is_tester)
+    cached = _EXAMPLE_CACHE.get(pid)
+    if cached is None:
+        mod = load_problem(p["problem_key"])
+        meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
+        inp, out = _example_io(mod, meta, p["kind"])
+        cached = {"example_input": inp, "example_output": out}
+        if len(_EXAMPLE_CACHE) > 512:
+            _EXAMPLE_CACHE.clear()
+        _EXAMPLE_CACHE[pid] = cached
+    return cached
 
 
 @router.get("/problems/{pid}/missions/{seed}/input")

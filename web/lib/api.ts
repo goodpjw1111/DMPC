@@ -117,6 +117,8 @@ export const setNickname = (nickname: string) => apiPost<{ nickname: string }>("
 // ---- contest / problem reads ----
 export const getContestDetail = (cid: string) => apiGet<ApiContestDetail>(`/api/contests/${cid}`);
 export const getProblem = (pid: string) => apiGet<ApiProblem>(`/api/problems/${pid}`);
+export type ProblemExample = { example_input: string | null; example_output: string | null };
+export const getProblemExample = (pid: string) => apiGet<ProblemExample>(`/api/problems/${pid}/example`);
 export const getStandings = (cid: string) => apiGet<StandingRow[]>(`/api/contests/${cid}/standings`);
 export const getMyEval = (cid: string) => apiGet<MyEval>(`/api/contests/${cid}/my-eval`);
 export const missionInputUrl = (pid: string, seed: number) => `${API_BASE}/api/problems/${pid}/missions/${seed}/input`;
