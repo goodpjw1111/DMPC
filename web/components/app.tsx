@@ -869,6 +869,13 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
       .catch((e) => { setStErr(String(e?.message ?? e)); setStState("error"); });
     loadReplays();
   }
+  function refreshStandings() {        // re-pull (bypasses the idle guard) — for admins after running an eval
+    setStState("loading");
+    getStandings(c.id)
+      .then((rows) => { setStandings(rows); setStState("done"); })
+      .catch((e) => { setStErr(String(e?.message ?? e)); setStState("error"); });
+    loadReplays();
+  }
   async function saveReplay(body: string, share: boolean, pdf: File | null) {
     try { await postReplay(c.id, body, share, pdf); showToast("풀이를 저장했습니다", share ? "공개는 관리자 승인 후 반영됩니다" : "비공개로 저장됨"); loadReplays(); }
     catch (e: any) { showToast("저장 실패", String(e?.message ?? e)); }
@@ -905,6 +912,7 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
   const hasStep = detail.problems.some((p) => p.kind === "stepup");
   const hasCh = detail.problems.some((p) => p.kind === "challenge");
   const ended = detail.status === "ended" || detail.status === "archived";
+  const showRanking = ended || isAdmin;   // admins can preview ranking/scores mid-contest to verify scoring
 
   return <div className="wrap">
     <Link href="/" className="back">← 모의고사 목록</Link>
@@ -925,13 +933,14 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
       <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, color: "var(--accent)", borderColor: "var(--accent)" }} onClick={deleteNow}>🗑 모의고사 삭제 (관리자)</button>
     </div>}
     {reg && <RegistrationCard registered={reg.registered} count={reg.count} open={reg.open} busy={regBusy} onToggle={toggleReg} />}
-    {ended && <div className="tabs" style={{ justifyContent: "center", margin: "6px 0 20px" }}>
+    {showRanking && <div className="tabs" style={{ justifyContent: "center", margin: "6px 0 20px" }}>
       <button className={"tab" + (tab !== "ranking" ? " active" : "")} onClick={() => setTab("problems")}>문제</button>
-      <button className={"tab" + (tab === "ranking" ? " active" : "")} onClick={() => { setTab("ranking"); loadStandings(); }}>🏆 랭킹</button>
+      <button className={"tab" + (tab === "ranking" ? " active" : "")} onClick={() => { setTab("ranking"); loadStandings(); }}>🏆 랭킹{!ended ? " (관리자)" : ""}</button>
     </div>}
-    {ended && tab === "ranking" ? <>
-      <h2 className="center" style={{ marginBottom: 6 }}>최종 랭킹</h2>
-      <p className="muted center" style={{ margin: "0 0 16px" }}>대회 종료 후에만 공개됩니다{standings ? ` · 참가자 ${standings.length}명` : ""}</p>
+    {showRanking && tab === "ranking" ? <>
+      <h2 className="center" style={{ marginBottom: 6 }}>{ended ? "최종 랭킹" : "현재 랭킹 (관리자 미리보기)"}</h2>
+      <p className="muted center" style={{ margin: "0 0 16px" }}>{ended ? "대회 종료 후에만 공개됩니다" : "진행 중 · 최신 평가 라운드 기준 · 관리자에게만 표시"}{standings ? ` · 참가자 ${standings.length}명` : ""}</p>
+      {isAdmin && <div className="center" style={{ margin: "-6px 0 16px" }}><button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} onClick={refreshStandings} disabled={stState === "loading"}>↻ 새로고침</button></div>}
       {stState === "loading" && <ApiLoading label="랭킹 집계 중…" />}
       {stState === "error" && <ApiErrorCard msg={stErr} />}
       {stState === "done" && (standings && standings.length ? <div className="card" style={{ padding: "6px 0" }}><table><tbody>
@@ -940,8 +949,8 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
           <td style={{ paddingLeft: 18 }}>{r.rank != null && r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : (r.rank ?? "-")}</td>
           <td>{r.nickname}{me && <span className="pill"> 나</span>}</td>
           <td style={{ textAlign: "right", paddingRight: 18 }}><b>{fmt(r.score)}</b></td></tr>; })}
-      </tbody></table></div> : <p className="muted center">아직 최종 채점 결과가 집계되지 않았습니다.</p>)}
-      {stState === "done" && <ReplayShowcase cid={c.id} podium={podium} replays={replays as ReplayView[]} myReplay={myReplay} isAdmin={isAdmin} onSave={saveReplay} onModerate={moderate} />}
+      </tbody></table></div> : <p className="muted center">{ended ? "아직 최종 채점 결과가 집계되지 않았습니다." : "아직 평가 결과가 없습니다 — 평가가 실행되면(09·18시 또는 문제 평가 탭의 '지금 평가 실행') 표시됩니다."}</p>)}
+      {ended && stState === "done" && <ReplayShowcase cid={c.id} podium={podium} replays={replays as ReplayView[]} myReplay={myReplay} isAdmin={isAdmin} onSave={saveReplay} onModerate={moderate} />}
     </> : <>
       <h2 className="center" style={{ marginBottom: 16 }}>문제 목록</h2>
       {hasStep && <Link href={`/c/${c.id}/stepup`} className="card" style={{ marginBottom: 14, display: "block", textDecoration: "none" }}>
