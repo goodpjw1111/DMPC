@@ -37,6 +37,11 @@ GEN_NODE_CAP = 1_200              # solvability-check budget per placement durin
                                   # within the cap). High enough to place FULL counts even on a
                                   # dense 30x30 (300 blocks), low enough to stay fast (~1-8s).
 REF_NODE_CAP = 250_000            # optimal-cost search budget (Step Up reference)
+MEM_STATE_CAP = 170_000           # RAM guard: a dense/large board can grow the Dijkstra `best`/`pq`
+                                  # to hundreds of MB (a C=2 fallback hit ~370MB) and OOM-kill a
+                                  # 512MB host before the expansion cap bites. Bail past this many
+                                  # tracked states (-> witness fallback) — ~95MB peak, still big
+                                  # enough for sane Step-Up boards to solve exactly.
 
 
 # --- parse / serialize ------------------------------------------------------
@@ -163,7 +168,7 @@ def _solve(inst: Instance, node_cap: int):
         if cost > best.get(st, 1 << 60):
             continue
         expanded += 1
-        if expanded > node_cap:
+        if expanded > node_cap or len(best) > MEM_STATE_CAP:   # give up (RAM/time) -> witness fallback
             return None
         dao, bazzi, blocks, turn = st
         dao_turn = inst.P == 1 or turn == 0
