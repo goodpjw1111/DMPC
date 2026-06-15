@@ -611,7 +611,14 @@ function ApiErrorCard({ msg }: { msg: string }) {
     <b className="bad">불러오지 못했습니다</b><p className="muted" style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{msg}</p>
   </div>;
 }
-const fmtAt = (iso: string) => (iso || "").slice(0, 16).replace("T", " ");
+const fmtAt = (iso: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso.slice(0, 16).replace("T", " ");
+  const k = new Date(d.getTime() + 9 * 3600 * 1000);   // render in KST (UTC+9), any viewer tz
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${k.getUTCFullYear()}-${p(k.getUTCMonth() + 1)}-${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())} KST`;
+};
 
 // ===== replays / 시상 (winners' writeups) — used by both mock & API detail =====
 type Podium = { rank: number; nick: string; score: number; me?: boolean };
@@ -867,7 +874,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
       getStepupSubmissions(pid).then((d) => on && setStepHist(d)).catch(() => on && setStepHist([]));
     if (rightTab === "history" && !isStep && chHist === null)
       getChallengeSubmissions(pid).then((d) => on && setChHist(d)).catch(() => on && setChHist([]));
-    if (rightTab === "eval" && myEval === null) {
+    if (rightTab === "eval") {       // always refetch on open so a just-graded round shows
       setEvalErr("");
       getMyEval(c.id).then((d) => on && setMyEval(d)).catch((e) => on && setEvalErr(String(e?.message ?? e)));
     }
@@ -1003,9 +1010,12 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
         {rightTab === "history" && isStep && <ApiStepHistory hist={stepHist} mission={mission} setMission={setMission} missions={missions} seed={curSeed} budget={curBudget} />}
         {rightTab === "history" && !isStep && <ApiChHistory hist={chHist} />}
         {rightTab === "eval" && <>
+          <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
+            <button className="btn ghost" style={{ padding: "4px 12px", fontSize: 12 }} onClick={loadEval}>↻ 새로고침</button>
+          </div>
           {isAdmin && <div className="card" style={{ marginBottom: 10, borderColor: "var(--line2)" }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span className="muted" style={{ fontSize: 12 }}>관리자: <b>지금 평가 라운드</b>를 만들어 즉시 채점(테스트). 실제 채점은 GitHub Actions <b>evals</b>가 수행합니다.</span>
+              <span className="muted" style={{ fontSize: 12 }}>관리자: <b>지금 평가 라운드</b>를 만들어 즉시 채점(테스트). 실제 채점은 GitHub Actions <b>evals</b>가 수행 → 끝나면 ↻ 새로고침.</span>
               <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={runEvalNow}>지금 평가 실행</button>
             </div>
           </div>}
@@ -1063,18 +1073,17 @@ function ApiEval({ data, err }: { data: MyEval | null; err: string }) {
     <h2 style={{ margin: "4px 0 2px" }}>{r.type === "final" ? "최종 평가" : "중간 평가"} 결과</h2>
     <p className="muted" style={{ margin: "0 0 12px" }}>{fmtAt(r.published_at)} 공개 · 채점 시각 {fmtAt(r.scheduled_at)}</p>
     {s && <div className="card" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 28, flexWrap: "wrap" }}>
-      <div><div className="k muted" style={{ fontSize: 11 }}>내 등수</div><div style={{ fontSize: 20, fontWeight: 700 }}>🌸 {s.rank ?? "-"}</div></div>
+      <div><div className="k muted" style={{ fontSize: 11 }}>🌸 챌린지 (퍼포먼스 점수)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.challenge_score)}</div></div>
       <div><div className="k muted" style={{ fontSize: 11 }}>총점</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.total_score)}</div></div>
-      <div><div className="k muted" style={{ fontSize: 11 }}>스텝업 / 챌린지</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmt(s.stepup_score)} / {fmt(s.challenge_score)}</div></div>
-    </div></div>}
-    <h3 style={{ margin: "0 0 8px" }}>테스트케이스별 점수 / 등수</h3>
-    {data.cases.length ? <div className="tscroll"><table><tbody><tr><th>시드</th><th>결과</th><th>비용</th><th>내 점수</th><th>등수</th><th>실행시간</th></tr>
+      <div><div className="k muted" style={{ fontSize: 11 }}>스텝업</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmt(s.stepup_score)}</div></div>
+    </div><p className="muted" style={{ margin: "8px 0 0", fontSize: 11 }}>※ 등수(상대 순위)는 대회 종료 후에만 공개됩니다 — 진행 중에는 본인 점수만 표시.</p></div>}
+    <h3 style={{ margin: "0 0 8px" }}>테스트케이스별 점수</h3>
+    {data.cases.length ? <div className="tscroll"><table><tbody><tr><th>시드</th><th>결과</th><th>비용</th><th>내 점수</th><th>실행시간</th></tr>
       {data.cases.map((cs, j) => <tr key={j}>
         <td className="muted">{cs.seed}</td>
         <td>{cs.verdict === "ok" ? <span className="ok">정상</span> : <span className="bad">{VERDICT_KO[cs.verdict] ?? cs.verdict}</span>}</td>
         <td>{cs.raw_cost != null ? fmt(Math.round(cs.raw_cost)) : "—"}</td>
         <td style={{ minWidth: 90 }}>{cs.case_score != null ? <Bar g={cs.case_score} t={1000000} sm /> : <span className="muted">—</span>}</td>
-        <td>{cs.case_rank != null ? (cs.case_rank === 1 ? <span className="ok"><b>1위</b></span> : `${cs.case_rank}위`) : "—"}</td>
         <td className="muted">{cs.runtime_ms != null ? `${cs.runtime_ms} ms` : "—"}</td></tr>)}
     </tbody></table></div> : <p className="muted">이 평가에 대한 케이스 결과가 없습니다.</p>}
   </>;
