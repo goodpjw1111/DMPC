@@ -96,6 +96,38 @@ def test_c2_constructively_solvable():
         assert valid and cost < P.MISS_COST, (seed, cost)
 
 
+def test_small_boards_require_pushing():
+    # The generator prefers boards where reaching the goal REQUIRES a push (no block-free walk).
+    # On small boards it can seal them, so nearly all should require pushing.
+    from collections import deque
+
+    def reachable_without_push(g):
+        inst = P.parse(g)
+        blocked = set(inst.walls) | set(inst.blocks)
+        seen = {inst.dao}
+        q = deque([inst.dao])
+        while q:
+            cur = q.popleft()
+            if cur == inst.goal:
+                return True
+            for dr, dc in P.DIRS.values():
+                n = (cur[0] + dr, cur[1] + dc)
+                if 0 <= n[0] < inst.R and 0 <= n[1] < inst.C and n not in blocked and n not in seen:
+                    seen.add(n)
+                    q.append(n)
+        return False
+
+    # a preset-style medium board with enough blocks to seal — most should require a push
+    strong = sum(not reachable_without_push(P.generate(s, {"rows": 10, "cols": 10, "players": 1, "obstacles": 10, "blocks": 30})) for s in range(10))
+    assert strong >= 6, f"only {strong}/10 medium boards require a push"
+
+
+def test_block_can_pass_through_goal():
+    # a block sitting on the goal must be pushable off it so Dao can enter (goal isn't a wall)
+    cost, valid, _ = P.check("1 5 1\nDO.G.\n", "RRR")   # block: (0,1)->(0,2)->goal(0,3)->(0,4); Dao ends on goal
+    assert valid and cost == 6.0, (valid, cost)
+
+
 def test_raised_density_places_past_old_max():
     # obstacle/block maxes were raised well past the old 60; a dense board places them and stays solvable.
     g = P.generate(1, {"rows": 20, "cols": 20, "players": 1, "obstacles": 150, "blocks": 80})

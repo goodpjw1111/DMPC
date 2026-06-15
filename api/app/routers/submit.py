@@ -66,6 +66,18 @@ async def _released_problem(pid: str, kind: str, *, tester: bool = False):
     return p
 
 
+async def _assert_registered(contest_id, user: CurrentUser) -> None:
+    """Submitting requires 참가 신청 (registration) — you must join the contest before its
+    problems open. Admins/testers bypass (they verify the contest). 403 otherwise."""
+    if user.is_tester:
+        return
+    row = await db.fetchrow(
+        "SELECT 1 FROM registrations WHERE contest_id=$1 AND user_id=$2", contest_id, user.id
+    )
+    if row is None:
+        raise HTTPException(403, "먼저 대회에 참가 신청을 해야 문제를 풀 수 있습니다.")
+
+
 # --- Step Up: submit an OUTPUT for a mission (graded instantly) -------------
 
 class StepUpIn(BaseModel):
@@ -76,6 +88,7 @@ class StepUpIn(BaseModel):
 @router.post("/problems/{pid}/stepup/submit")
 async def stepup_submit(pid: str, body: StepUpIn, user: CurrentUser = Depends(get_current_user)):
     p = await _problem_live(pid, "stepup", tester=user.is_tester)
+    await _assert_registered(p["contest_id"], user)
     try:
         async with db.pool().acquire() as conn:
             async with conn.transaction():
@@ -140,6 +153,7 @@ async def challenge_submit(
     if clen and clen.isdigit() and int(clen) > MAX_BODY:
         raise HTTPException(413, "request body exceeds the size limit (source 1MB + data.bin 10MB)")
     p = await _problem_live(pid, "challenge", tester=user.is_tester)
+    await _assert_registered(p["contest_id"], user)
     # per-user cooldown: each accepted submission enqueues a grader job, so cap the rate a
     # single user can flood the (free-tier) grader, independent of the per-IP rate limiter.
     recent = await db.fetchrow(

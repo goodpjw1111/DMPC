@@ -827,7 +827,7 @@ function RegistrationCard({ registered, count, open, busy, onToggle }: {
 }
 
 function ApiContestDetail({ contest: c }: { contest: Contest }) {
-  const { nick, isAdmin, showToast } = useStore();
+  const { nick, isAdmin, isTester, showToast } = useStore();
   const [detail, setDetail] = useState<ApiContestDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"problems" | "ranking">("problems");
@@ -913,6 +913,9 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
   const hasCh = detail.problems.some((p) => p.kind === "challenge");
   const ended = detail.status === "ended" || detail.status === "archived";
   const showRanking = ended || isAdmin;   // admins can preview ranking/scores mid-contest to verify scoring
+  // problems open only after 참가 신청 (registration). Admins/testers always in; ended contests
+  // are viewable by all (results). Otherwise you must be registered.
+  const canEnter = ended || isAdmin || isTester || !!reg?.registered;
 
   return <div className="wrap">
     <Link href="/" className="back">← 모의고사 목록</Link>
@@ -953,11 +956,15 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
       {ended && stState === "done" && <ReplayShowcase cid={c.id} podium={podium} replays={replays as ReplayView[]} myReplay={myReplay} isAdmin={isAdmin} onSave={saveReplay} onModerate={moderate} />}
     </> : <>
       <h2 className="center" style={{ marginBottom: 16 }}>문제 목록</h2>
-      {hasStep && <Link href={`/c/${c.id}/stepup`} className="card" style={{ marginBottom: 14, display: "block", textDecoration: "none" }}>
+      {!canEnter && (hasStep || hasCh) && <div className="card" style={{ marginBottom: 14, textAlign: "center", borderColor: "var(--accent)" }}>
+        <b>🔒 참가 신청 후 문제가 열립니다</b>
+        <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>위 <b>참가 신청</b> 버튼으로 신청하면 스텝업·챌린지 문제를 풀 수 있어요.</p>
+      </div>}
+      {canEnter && hasStep && <Link href={`/c/${c.id}/stepup`} className="card" style={{ marginBottom: 14, display: "block", textDecoration: "none" }}>
         <h3 style={{ marginBottom: 4 }}>{detail.title} — 스텝 업 <span className="pill" style={{ marginLeft: 6 }}>만점 100만 · 반영 20%</span></h3>
         <div className="muted" style={{ marginBottom: 10, fontSize: 13 }}>미션별로 <b>정답 출력을 직접 제출</b> · 기준 비용 대비 절대 점수 · 코드 불필요</div>
         <Bar g={su} t={1000000} /></Link>}
-      {hasCh && <Link href={`/c/${c.id}/challenge`} className="card" style={{ display: "block", textDecoration: "none" }}>
+      {canEnter && hasCh && <Link href={`/c/${c.id}/challenge`} className="card" style={{ display: "block", textDecoration: "none" }}>
         <h3 style={{ marginBottom: 4 }}>{detail.title} — 챌린지 <span className="pill" style={{ marginLeft: 6 }}>만점 100만 · 반영 80%</span></h3>
         <div className="muted" style={{ marginBottom: 8, fontSize: 13 }}><b>코드를 제출</b> · 참가자 <b>상대 등수</b>로 채점 · 매일 09·18시 평가 {ch === 0 && <span>(아직 평가 전 — 0점)</span>}</div>
         <Bar g={ch} t={1000000} /></Link>}

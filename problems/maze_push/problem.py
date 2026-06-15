@@ -25,15 +25,17 @@ from __future__ import annotations
 import heapq
 import itertools
 import random
+from collections import deque
 
 WALL, BLOCK, DAO, BAZZI, GOAL, EMPTY = "#", "O", "D", "Z", "G", "."
 DIRS = {"U": (-1, 0), "D": (1, 0), "L": (0, -1), "R": (0, 1)}
 MISS_COST = 100_000               # cost when the goal is never reached
 
 DEFAULTS = {"rows": 7, "cols": 7, "players": 1, "obstacles": 5, "blocks": 6}
-GEN_NODE_CAP = 3_000              # solvability-check budget per placement during generation
-                                  # (boards here solve in <~1k nodes, so this stays fast even
-                                  # on dense 30x30 instances; full counts still get placed)
+GEN_NODE_CAP = 1_200              # solvability-check budget per placement during generation.
+                                  # Accepted boards are genuinely solvable (a solution was found
+                                  # within the cap). High enough to place FULL counts even on a
+                                  # dense 30x30 (300 blocks), low enough to stay fast (~1-8s).
 REF_NODE_CAP = 250_000            # optimal-cost search budget (Step Up reference)
 
 
@@ -210,7 +212,28 @@ def _pick(rng: random.Random, p: dict, key: str) -> int:
     return int(v)
 
 
-def generate(seed: int, params: dict | None = None) -> str:
+GEN_RETRIES = 6                   # re-roll a board up to this many times to get one needing a push
+
+
+def _reachable_without_push(R, C, walls, blocks, dao, goal) -> bool:
+    """Can Dao reach the goal moving only through EMPTY cells (no pushing)? If so the case is
+    WEAK — blocks aren't needed. Used to prefer boards where a push is actually required."""
+    blocked = walls | blocks
+    seen = {dao}
+    q = deque([dao])
+    while q:
+        cur = q.popleft()
+        if cur == goal:
+            return True
+        for dr, dc in DIRS.values():
+            nxt = (cur[0] + dr, cur[1] + dc)
+            if 0 <= nxt[0] < R and 0 <= nxt[1] < C and nxt not in blocked and nxt not in seen:
+                seen.add(nxt)
+                q.append(nxt)
+    return False
+
+
+def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
     rng = random.Random(seed)
     p = _merged(params)
     R, C = max(3, _pick(rng, p, "rows")), max(3, _pick(rng, p, "cols"))
@@ -219,7 +242,10 @@ def generate(seed: int, params: dict | None = None) -> str:
 
     cells = [(r, c) for r in range(R) for c in range(C)]
     rng.shuffle(cells)
-    dao, goal = cells[0], cells[1]
+    dao = cells[0]
+    # keep the goal a couple steps from Dao so a board can actually REQUIRE a push
+    # (a goal adjacent to Dao is a trivial 1-step walk — always weak).
+    goal = next((x for x in cells[1:] if abs(x[0] - dao[0]) + abs(x[1] - dao[1]) >= 2), cells[1])
     if P == 2:
         # Bazzi starts on the BORDER so it can ALWAYS "pass": a move outward into the grid
         # boundary fails and changes nothing. That lets a Dao-alone (P=1) solution be lifted
@@ -256,9 +282,27 @@ def generate(seed: int, params: dict | None = None) -> str:
             else:
                 target_set.discard(x)
 
-    place(walls, W)                   # obstacles first, then pushable blocks
+    place(walls, W)                   # obstacles first (static), then pushable blocks
     place(blocks, B)
-    return _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
+    board = _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
+    # `requires_push` = Dao can't reach the goal through empty cells alone (a block is in the way)
+    return board, not _reachable_without_push(R, C, walls, blocks, dao, goal), R * C
+
+
+def generate(seed: int, params: dict | None = None) -> str:
+    """Generate a board, preferring one where reaching the goal REQUIRES pushing a block (a
+    goal reachable through empty cells alone is a weak test case) — re-roll up to GEN_RETRIES
+    times, else fall back to the first board. Every board is push-solvable by construction."""
+    first = None
+    for k in range(GEN_RETRIES):
+        board, requires_push, area = _generate_once(seed * 1009 + k, params)
+        if requires_push:
+            return board
+        if first is None:
+            first = board
+        if area > 256:            # large board: sealing the goal with the budget is usually
+            break                 # infeasible and each build is costly — take the first one
+    return first
 
 
 META = {
@@ -296,7 +340,9 @@ META = {
         "- 이동하려는 칸에 블럭이 있으면 **그 방향으로 이어진 블럭들을 한 칸씩 밉니다.** "
         "이어진 블럭이 `k`개면 이 행동의 비용은 **`1 + k`** 입니다 (예: 블럭 3개를 밀면 `1 + 3 = 4`).\n"
         "- **이어진 블럭의 끝이 벽/장애물/격자 밖**이면 밀 수 없어 **이동은 실패**하고 제자리에 머뭅니다. "
-        "단, **실패해도 이동 비용 1은 추가**됩니다. (블럭 없이 벽으로 바로 이동해도 실패 + 비용 1.)\n\n"
+        "단, **실패해도 이동 비용 1은 추가**됩니다. (블럭 없이 벽으로 바로 이동해도 실패 + 비용 1.)\n"
+        "- 블럭은 **목표 칸(`G`)을 지나갈 수 있습니다** — 목표는 벽이 아니라 블럭 이동을 막지 않습니다. "
+        "도달은 **다오가 목표 칸에 설 때** 인정되며, 목표 위에 블럭이 있으면 밀어내고 들어가야 합니다.\n\n"
         "### 출력 / 비용\n"
         "- `U/D/L/R` 로 이루어진 **이동 문자열**을 출력합니다. 다오가 목표에 도달한 시점에서 멈춥니다.\n"
         "- **도달 시 비용 = 그때까지 누적된 총 비용**, **끝까지 도달 못하면 100,000**. 비용이 낮을수록 좋습니다.\n"
