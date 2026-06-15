@@ -96,6 +96,20 @@ def test_c2_constructively_solvable():
         assert valid and cost < P.MISS_COST, (seed, cost)
 
 
+def test_dao_goal_fixed_corners():
+    # Dao always starts top-left (0,0); goal is always bottom-right (N-1, M-1). Only Bazzi roams.
+    for seed in range(5):
+        for params in ({"rows": 7, "cols": 9, "players": 1, "obstacles": 5, "blocks": 6},
+                       {"rows": 12, "cols": 8, "players": 2, "obstacles": 8, "blocks": 12}):
+            inst = P.parse(P.generate(seed, params))
+            assert inst.dao == (0, 0), inst.dao
+            assert inst.goal == (inst.R - 1, inst.C - 1), (inst.goal, inst.R, inst.C)
+            if inst.P == 2:
+                bz = inst.bazzi
+                assert bz not in (inst.dao, inst.goal), bz
+                assert bz[0] in (0, inst.R - 1) or bz[1] in (0, inst.C - 1), bz   # on the border
+
+
 def test_small_boards_require_pushing():
     # The generator prefers boards where reaching the goal REQUIRES a push (no block-free walk).
     # On small boards it can seal them, so nearly all should require pushing.

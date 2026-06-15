@@ -242,18 +242,16 @@ def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
 
     cells = [(r, c) for r in range(R) for c in range(C)]
     rng.shuffle(cells)
-    dao = cells[0]
-    # keep the goal a couple steps from Dao so a board can actually REQUIRE a push
-    # (a goal adjacent to Dao is a trivial 1-step walk — always weak).
-    goal = next((x for x in cells[1:] if abs(x[0] - dao[0]) + abs(x[1] - dao[1]) >= 2), cells[1])
+    # FIXED corners: Dao always starts top-left (0,0) and the goal is always bottom-right
+    # (N-1, M-1), so every instance is a full corner-to-corner traversal (much harder than a
+    # nearby start/goal). Only Bazzi's position is randomized.
+    dao, goal = (0, 0), (R - 1, C - 1)
     if P == 2:
-        # Bazzi starts on the BORDER so it can ALWAYS "pass": a move outward into the grid
-        # boundary fails and changes nothing. That lets a Dao-alone (P=1) solution be lifted
-        # to C=2 verbatim (Bazzi passes every turn), making the P=1 solvability oracle below
-        # a constructive proof that the C=2 board is solvable too.
-        border = [(r, c) for (r, c) in cells if r in (0, R - 1) or c in (0, C - 1)]
-        bazzi = next(((r, c) for (r, c) in border if (r, c) not in (dao, goal)),
-                     next((x for x in cells if x not in (dao, goal)), cells[2]))
+        # Bazzi at a RANDOM border cell (cells is shuffled) — a border cell can always "pass"
+        # (a move outward into the boundary fails harmlessly), so a Dao-alone (P=1) solution
+        # lifts to C=2 verbatim and the P=1 solvability oracle below remains a valid proof.
+        border = [(r, c) for (r, c) in cells if (r in (0, R - 1) or c in (0, C - 1)) and (r, c) not in (dao, goal)]
+        bazzi = border[0] if border else next((x for x in cells if x not in (dao, goal)), (0, 1))
     else:
         bazzi = (-1, -1)
     occupied = {dao, goal} | ({bazzi} if P == 2 else set())
@@ -330,7 +328,9 @@ META = {
         "```\nN M C\n<N줄의 격자 (각 줄 M글자)>\n```\n"
         "- 첫 줄: **N** 행 수, **M** 열 수, **C** 플레이어 수.\n"
         "- 이어서 N줄, 각 줄 M글자의 격자. 기호: `#` 장애물/벽(고정), `O` 블럭(밀 수 있음), "
-        "`D` 다오 시작, `G` 목표, `Z` 배찌 시작(`C=2`일 때만), `.` 빈 칸. **격자 바깥은 벽**으로 취급합니다.\n\n"
+        "`D` 다오 시작, `G` 목표, `Z` 배찌 시작(`C=2`일 때만), `.` 빈 칸. **격자 바깥은 벽**으로 취급합니다.\n"
+        "- **다오(`D`)는 항상 좌상단 `(0, 0)`에서 시작하고, 목표(`G`)는 항상 우하단 `(N-1, M-1)`에 있습니다** "
+        "(코너 → 코너 완주). 배찌(`Z`, `C=2`)의 시작 위치만 매 케이스 무작위입니다.\n\n"
         "**변수 범위**\n"
         "- `3 ≤ N ≤ 30`, `3 ≤ M ≤ 30` — **챌린지에서는 항상 `N = M = 30` (30×30 보드).**\n"
         "- `C ∈ {1, 2}` — 플레이어 수.\n"
