@@ -329,7 +329,8 @@ function ChallengeSimulator() {
 // Register the clean-robot family simulator (grid + dust + robot). A problem whose
 // META.simulator_key === "clean" renders these. A NEW problem calls registerSimulator
 // with its own key + components; the dispatch site (ApiProblemView) needs no edits.
-registerSimulator("clean", { Step: StepSimulator, Challenge: ChallengeSimulator });
+registerSimulator("clean", { Step: StepSimulator, Challenge: ChallengeSimulator,
+  validate: (t) => { try { return !!parseInst(t); } catch { return false; } } });
 
 // ===== maze_push simulator (다오와 배찌의 길찾기) =====
 // Renders the grid from the parsed instance + the live state from replayMaze (a JS
@@ -424,7 +425,8 @@ function MazeChallengeSim() {
   </>;
 }
 
-registerSimulator("maze", { Step: MazeStepSim, Challenge: MazeChallengeSim });
+registerSimulator("maze", { Step: MazeStepSim, Challenge: MazeChallengeSim,
+  validate: (t) => { try { const m = parseMaze(t); return m.R >= 1 && m.C >= 1; } catch { return false; } } });
 
 // ===== problem view =====
 type RightTab = "submit" | "history" | "eval";
@@ -1013,8 +1015,11 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           if (!on) return;
           // if any input failed to fetch or won't parse, keep the missions (so the user can
           // still paste an output and submit) but disable the in-browser simulator — feeding
-          // an empty/garbage grid to StepSimulator's parseInst would crash the pane.
-          const ok = inputs.every((t) => { try { return !!parseInst(t); } catch { return false; } });
+          // an empty/garbage grid to the sim's parser would crash the pane. Validate with
+          // THIS problem's simulator parser (clean ≠ maze ≠ …), not a hardcoded one; if the
+          // sim declares no validator, trust the inputs (they come from its own generator).
+          const simEntry = getSimulator(p.simulator_key);
+          const ok = simEntry?.validate ? inputs.every((t) => { try { return simEntry.validate!(t); } catch { return false; } }) : true;
           setSimInputOk(ok);
           setMissions(p.missions.map((m, i) => ({ mission: i + 1, seed: m.seed, input: inputs[i], budget: m.budget, best: m.best_score })));
         }

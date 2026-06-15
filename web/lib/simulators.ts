@@ -26,6 +26,10 @@ export type StepSimProps = {
 export type SimulatorEntry = {
   Step?: ComponentType<StepSimProps>;            // Step Up: interactive editor → output
   Challenge?: ComponentType<Record<string, never>>; // Challenge: paste-in input/output visualizer
+  // Returns true if `input` parses for THIS simulator. Used to decide whether the Step Up
+  // sim can render the mission inputs (each problem parses its own format — clean ≠ maze).
+  // Omit to trust the inputs (they come from the problem's own generator).
+  validate?: (input: string) => boolean;
 };
 
 const REGISTRY: Record<string, SimulatorEntry> = {};
