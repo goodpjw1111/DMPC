@@ -84,6 +84,7 @@ export type ApiProblem = {
   time_limit_ms: number; memory_limit_mb: number; simulator_key: string | null;
   example_input?: string | null; example_output?: string | null;
   missions?: ApiMission[];
+  subtasks?: { name: string; budget: number }[];   // challenge: condition-based subtask names + weights
 };
 export type StepupSubmitResult = {
   submission_id: string; mission_seed: number; valid: boolean;

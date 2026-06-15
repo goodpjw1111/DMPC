@@ -31,7 +31,9 @@ DIRS = {"U": (-1, 0), "D": (1, 0), "L": (0, -1), "R": (0, 1)}
 MISS_COST = 100_000               # cost when the goal is never reached
 
 DEFAULTS = {"rows": 7, "cols": 7, "players": 1, "obstacles": 5, "blocks": 6}
-GEN_NODE_CAP = 20_000             # solvability search budget during generation
+GEN_NODE_CAP = 3_000              # solvability-check budget per placement during generation
+                                  # (boards here solve in <~1k nodes, so this stays fast even
+                                  # on dense 30x30 instances; full counts still get placed)
 REF_NODE_CAP = 250_000            # optimal-cost search budget (Step Up reference)
 
 
@@ -218,13 +220,27 @@ def generate(seed: int, params: dict | None = None) -> str:
     cells = [(r, c) for r in range(R) for c in range(C)]
     rng.shuffle(cells)
     dao, goal = cells[0], cells[1]
-    bazzi = cells[2] if P == 2 else (-1, -1)
+    if P == 2:
+        # Bazzi starts on the BORDER so it can ALWAYS "pass": a move outward into the grid
+        # boundary fails and changes nothing. That lets a Dao-alone (P=1) solution be lifted
+        # to C=2 verbatim (Bazzi passes every turn), making the P=1 solvability oracle below
+        # a constructive proof that the C=2 board is solvable too.
+        border = [(r, c) for (r, c) in cells if r in (0, R - 1) or c in (0, C - 1)]
+        bazzi = next(((r, c) for (r, c) in border if (r, c) not in (dao, goal)),
+                     next((x for x in cells if x not in (dao, goal)), cells[2]))
+    else:
+        bazzi = (-1, -1)
     occupied = {dao, goal} | ({bazzi} if P == 2 else set())
     walls: set = set()
     blocks: set = set()
 
     def solvable() -> bool:
-        inst = Instance(R, C, P, walls, blocks, dao, bazzi, goal)
+        # Check with P=1 (Dao alone) even for C=2. Bazzi can always take a non-disruptive
+        # turn — move into a wall/edge to "pass", or step onto an empty cell (players are
+        # transparent; only Bazzi's block-pushes change the board) — so any board Dao can
+        # solve alone is also solvable with the helper. This keeps the (Dao,Bazzi,blocks)
+        # state space from exploding on large C=2 boards (which otherwise can't be verified).
+        inst = Instance(R, C, 1, walls, blocks, dao, bazzi, goal)
         return _solve(inst, GEN_NODE_CAP) is not None
 
     def place(target_set: set, count: int) -> None:
@@ -257,20 +273,25 @@ META = {
     "gen_params": DEFAULTS,
     "feature_schema": [
         {"key": "rows", "label": "행 R", "min": 3, "max": 30, "default": 7},
-        {"key": "cols", "label": "열 W", "min": 3, "max": 30, "default": 7},
+        {"key": "cols", "label": "열 M", "min": 3, "max": 30, "default": 7},
         {"key": "players", "label": "플레이어 수 C", "min": 1, "max": 2, "default": 1},
-        {"key": "obstacles", "label": "장애물 수", "min": 0, "max": 60, "default": 5},
-        {"key": "blocks", "label": "블럭 수", "min": 0, "max": 60, "default": 6},
+        {"key": "obstacles", "label": "장애물 수 W", "min": 0, "max": 400, "default": 5},
+        {"key": "blocks", "label": "블럭 수 B", "min": 0, "max": 150, "default": 6},
     ],
     "statement_md": (
         "## 다오와 배찌의 길찾기\n\n"
         "다오(`D`)는 블럭(`O`)이 흩어진 미로에 갇혀 있습니다. **목표 칸(`G`)에 도달**하면 탈출입니다. "
         "이동은 `U`/`D`/`L`/`R` 네 방향이며, 각 이동은 **비용 1** 이 듭니다.\n\n"
         "### 입력\n"
-        "```\nR C P\n<R줄의 격자 (각 C칸)>\n```\n"
-        "- `R C P` — 행, 열, 플레이어 수(1 또는 2)\n"
-        "- 격자 기호: `#` 벽/장애물(고정), `O` 블럭(밀 수 있음), `D` 다오 시작, "
-        "`G` 목표, `Z` 배찌 시작(`P=2`일 때만), `.` 빈 칸. **격자 바깥은 벽**으로 취급합니다.\n\n"
+        "```\nR M C\n<R줄의 격자 (각 줄 M글자)>\n```\n"
+        "- 첫 줄: **R** 행 수, **M** 열 수, **C** 플레이어 수.\n"
+        "- 이어서 R줄, 각 줄 M글자의 격자. 기호: `#` 장애물/벽(고정), `O` 블럭(밀 수 있음), "
+        "`D` 다오 시작, `G` 목표, `Z` 배찌 시작(`C=2`일 때만), `.` 빈 칸. **격자 바깥은 벽**으로 취급합니다.\n\n"
+        "**변수 범위**\n"
+        "- `3 ≤ R ≤ 30`, `3 ≤ M ≤ 30` — **챌린지에서는 항상 `R = M = 30` (30×30 보드).**\n"
+        "- `C ∈ {1, 2}` — 플레이어 수.\n"
+        "- `0 ≤ W ≤ 400` — **장애물(벽) 수** = 격자 속 `#`의 개수.\n"
+        "- `0 ≤ B ≤ 150` — **블럭 수** = 격자 속 `O`의 개수.\n\n"
         "### 블럭 밀기 규칙\n"
         "- 이동하려는 칸에 블럭이 있으면 **그 방향으로 이어진 블럭들을 한 칸씩 밉니다.** "
         "이어진 블럭이 `k`개면 이 행동의 비용은 **`1 + k`** 입니다 (예: 블럭 3개를 밀면 `1 + 3 = 4`).\n"
@@ -281,7 +302,7 @@ META = {
         "- **도달 시 비용 = 그때까지 누적된 총 비용**, **끝까지 도달 못하면 100,000**. 비용이 낮을수록 좋습니다.\n"
         "- 보드는 **항상 해결 가능**하게 주어집니다.\n\n"
         "### C = 2 — 도우미 배찌\n"
-        "`P=2`이면 배찌(`Z`)가 등장합니다. 배찌는 목표에 도달할 필요는 없고, **블럭을 밀어 다오를 돕는** 역할입니다. "
+        "`C = 2`이면 배찌(`Z`)가 등장합니다. 배찌는 목표에 도달할 필요는 없고, **블럭을 밀어 다오를 돕는** 역할입니다. "
         "두 플레이어는 **번갈아 가며**(다오 → 배찌 → 다오 → …) 움직이고, 위 규칙이 동일하게 적용됩니다. "
         "출력 문자열의 짝수번째(0,2,4,…) 문자는 **다오**, 홀수번째(1,3,5,…)는 **배찌**의 이동입니다. "
         "**다오와 배찌는 위치가 겹칠 수 있습니다.**"

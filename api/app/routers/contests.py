@@ -224,6 +224,14 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
             {"seed": s, "budget": budgets[i], "best_score": best_by_seed.get(s, 0)}
             for i, s in enumerate(seeds)
         ]
+    elif p["kind"] == "challenge":
+        # condition-based subtasks shown to contestants (names + weights). Only the
+        # descriptive names/budgets are exposed — the hidden per-round seeds are NOT.
+        subs = meta.get("challenge_subtasks") or []
+        base["subtasks"] = [
+            {"name": (s.get("name") or f"부분문제 {i + 1}"), "budget": int(s.get("budget", 0))}
+            for i, s in enumerate(subs)
+        ]
     return base
 
 

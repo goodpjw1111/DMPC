@@ -73,6 +73,36 @@ def test_feature_ranges_in_generate():
     assert len(counts) > 1, counts   # block count actually varies within the range
 
 
+def test_c2_bazzi_starts_on_border():
+    # Bazzi on the border can always "pass" (move outward) -> the P=1 solvability oracle is
+    # a valid proof that the C=2 board is solvable too.
+    for seed in range(8):
+        g = P.generate(seed, {"rows": 7, "cols": 7, "players": 2, "obstacles": 4, "blocks": 4})
+        bz = P.parse(g).bazzi
+        assert bz[0] in (0, 6) or bz[1] in (0, 6), (seed, bz)
+
+
+def test_c2_constructively_solvable():
+    # Dao-alone solution + Bazzi border-passes must reach the goal for the generated C=2 board.
+    for seed in range(12):
+        g = P.generate(seed, {"rows": 8, "cols": 8, "players": 2, "obstacles": 6, "blocks": 7})
+        inst = P.parse(g)
+        c1 = P._solve(P.Instance(inst.R, inst.C, 1, inst.walls, inst.blocks, inst.dao, inst.bazzi, inst.goal), P.GEN_NODE_CAP)
+        assert c1, (seed, "no dao-alone solution")
+        br, bc = inst.bazzi
+        bnull = "U" if br == 0 else "D" if br == inst.R - 1 else "L" if bc == 0 else "R"
+        out = "".join(d + (bnull if i < len(c1[1]) - 1 else "") for i, d in enumerate(c1[1]))
+        cost, valid, _ = P.check(g, out)
+        assert valid and cost < P.MISS_COST, (seed, cost)
+
+
+def test_raised_density_places_past_old_max():
+    # obstacle/block maxes were raised well past the old 60; a dense board places them and stays solvable.
+    g = P.generate(1, {"rows": 20, "cols": 20, "players": 1, "obstacles": 150, "blocks": 80})
+    assert g.count("#") > 60 and g.count("O") > 60, (g.count("#"), g.count("O"))
+    assert P._solve(P.parse(g), P.GEN_NODE_CAP) is not None
+
+
 if __name__ == "__main__":
     tests = [(n, o) for n, o in sorted(globals().items())
              if n.startswith("test_") and isinstance(o, types.FunctionType)]

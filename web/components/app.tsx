@@ -60,6 +60,18 @@ function MarkdownView({ md }: { md: string }) {
   const html = useMemo(() => renderMarkdownWithMath(md), [md]);
   return <div className="statement" dangerouslySetInnerHTML={{ __html: html }} />;
 }
+// Challenge: list the authored condition-based subtasks (names + weights) in the body.
+function SubtaskList({ subtasks }: { subtasks?: { name: string; budget: number }[] }) {
+  if (!subtasks || subtasks.length === 0) return null;
+  const total = subtasks.reduce((a, s) => a + (s.budget || 0), 0);
+  return <div className="card" style={{ marginTop: 12 }}>
+    <h3 style={{ margin: "0 0 6px" }}>부분문제는 다음과 같습니다</h3>
+    <p className="muted" style={{ fontSize: 12, margin: "0 0 10px" }}>각 부분문제는 조건별로 따로 <b>상대 등수</b>로 채점되고 배점을 합산합니다{total ? ` (배점 합 ${fmt(total)})` : ""}.</p>
+    <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.9 }}>
+      {subtasks.map((s, i) => <li key={i}><b style={{ color: "var(--fg)" }}>{s.name}</b>{s.budget ? <span className="muted"> — 배점 {fmt(s.budget)}</span> : null}</li>)}
+    </ol>
+  </div>;
+}
 function CustomGenNotice() {
   return <div className="card"><b>커스텀 생성기 문제</b><p className="muted" style={{ margin: "8px 0 0" }}>작성된 생성기/체커 코드로 <b>서버에서 채점</b>됩니다. 브라우저 미리보기·제출은 실 API 연동 후 지원됩니다.</p></div>;
 }
@@ -1097,7 +1109,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           ? (isStep
               ? (simReady && SimStep ? <SimStep mission={mission} setMission={setMission} onOutput={setStepOutput} missions={missions} initial={stepOutput} /> : <CustomGenNotice />)
               : (SimCh ? <SimCh /> : <CustomGenNotice />))
-          : <><LimitsBar p={problem} />{isStep ? (statement ? <MarkdownView md={statement} /> : <CustomGenNotice />) : <ChallengeStatement md={statement} />}<ExampleIO p={problem} /></>}
+          : <><LimitsBar p={problem} />{isStep ? (statement ? <MarkdownView md={statement} /> : <CustomGenNotice />) : <><ChallengeStatement md={statement} /><SubtaskList subtasks={problem?.subtasks} /></>}<ExampleIO p={problem} /></>}
       </div>
     </div>
     <div className="pane right">
