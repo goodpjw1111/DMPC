@@ -182,9 +182,12 @@ export type EvalHealth = {
   graded_last_tick: number | null;
   dispatch_configured: boolean;
   overdue_rounds: number;
+  latest_error: string | null;      // failure reason of the most recent failed round (why grading failed)
   latest_round: { status: string; type: string; scheduled_at: string; published_at: string | null } | null;
 };
 export const getEvalHealth = () => apiGet<EvalHealth>("/api/admin/eval-health");
+// recover stuck rounds (reset attempts -> re-grade). Use after fixing the root cause.
+export const retryEvals = () => apiPost<{ reset: number; dispatch: "sent" | "unconfigured" | "error" }>("/api/admin/eval-retry");
 export const endContest = (cid: string) =>
   apiPost<{ status: string; final_round_id: string; ends_at: string; dispatch: "sent" | "unconfigured" | "error" }>(`/api/admin/contests/${cid}/end`);
 export const publishContest = (cid: string) =>

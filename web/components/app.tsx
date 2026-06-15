@@ -24,7 +24,7 @@ import {
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
   getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest, deleteContest,
-  getEvalHealth,
+  getEvalHealth, retryEvals,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration, type EvalHealth,
 } from "@/lib/api";
@@ -1152,6 +1152,16 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     } catch (e: any) { showToast("평가 생성 실패", String(e?.message ?? e)); }
     finally { busyRef.current = false; setBusy(false); }
   }
+  async function retryStuck() {              // admin: reset stuck rounds so the grader re-grades them
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true);
+    try {
+      const r = await retryEvals();
+      showToast("막힌 라운드 재시도", `${r.reset}개 라운드를 재시도 대기로 되돌렸어요${r.dispatch === "sent" ? " — 지금 채점 트리거됨" : " — 최대 15분 내 자동"}. 잠시 후 ↻ 새로고침.`);
+      if (isAdmin) getEvalHealth().then(setEvalHealth).catch(() => {});
+    } catch (e: any) { showToast("재시도 실패", String(e?.message ?? e)); }
+    finally { busyRef.current = false; setBusy(false); }
+  }
 
   if (loading) return <div className="wrap"><Link href={`/c/${c.id}`} className="back">← 문제 목록</Link><ApiLoading label="문제 불러오는 중…" /></div>;
   if (loadErr) return <div className="wrap"><Link href={`/c/${c.id}`} className="back">← 문제 목록</Link><ApiErrorCard msg={loadErr} /></div>;
@@ -1262,7 +1272,10 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           {isAdmin && <div className="card" style={{ marginBottom: 10, borderColor: "var(--line2)" }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span className="muted" style={{ fontSize: 12 }}>관리자: <b>지금 평가 라운드</b>를 만들어 즉시 채점(테스트). 실제 채점은 GitHub Actions <b>evals</b>가 수행 → 끝나면 ↻ 새로고침.</span>
-              <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={runEvalNow}>지금 평가 실행</button>
+              <div className="row" style={{ gap: 6 }}>
+                <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={runEvalNow}>지금 평가 실행</button>
+                <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={retryStuck} title="실패/막힌 라운드의 attempts를 초기화해 다시 채점">막힌 라운드 재시도</button>
+              </div>
             </div>
             <EvalHealthLine health={evalHealth} />
           </div>}
@@ -1316,7 +1329,7 @@ const VERDICT_KO: Record<string, string> = {
 // scheduler heartbeat). Answers the operator's question without opening GitHub Actions.
 function EvalHealthLine({ health }: { health: EvalHealth | null }) {
   if (!health) return <p className="muted" style={{ margin: "8px 0 0", fontSize: 11 }}>채점기 상태 확인 중…</p>;
-  const { last_tick_at, age_seconds, grader_alive, secret_present, dispatch_configured, overdue_rounds, graded_last_tick } = health;
+  const { last_tick_at, age_seconds, grader_alive, secret_present, dispatch_configured, overdue_rounds, graded_last_tick, latest_error } = health;
   const tokenLine = <div className="muted">즉시 채점 토큰: {dispatch_configured ? "설정됨 ✓ (버튼 = 즉시 채점)" : "미설정 (버튼 → 최대 15분 내 자동)"}</div>;
   const box = { marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)", fontSize: 11, lineHeight: 1.7 } as const;
 
@@ -1344,7 +1357,8 @@ function EvalHealthLine({ health }: { health: EvalHealth | null }) {
     </div>
     {secret_present === true && <div className="muted">그레이더 Secret: 설정됨 ✓</div>}
     {tokenLine}
-    {overdue_rounds > 0 && <div className="bad">지연된 라운드 {overdue_rounds}개 — 채점이 완료되지 않고 있어요(EVAL_SEED_SECRET 불일치/isolate 셋업 실패 의심 → Actions 로그 확인).</div>}
+    {overdue_rounds > 0 && <div className="bad">지연된 라운드 {overdue_rounds}개 — 채점이 완료되지 않고 있어요. 원인 해결 후 <b>막힌 라운드 재시도</b>로 복구하세요.</div>}
+    {latest_error && <div className="bad" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", marginTop: 2 }}>실패 사유: <code>{latest_error}</code></div>}
     {!grader_alive && <div className="bad">최근 점검이 오래됐어요 — evals 워크플로가 비활성화됐을 수 있어요(60일 미커밋 시 자동 비활성 → Actions에서 재활성).</div>}
     {graded_last_tick != null && graded_last_tick > 0 && <div className="muted">최근 점검에서 {graded_last_tick}개 라운드 채점됨.</div>}
   </div>;

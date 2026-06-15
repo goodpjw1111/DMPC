@@ -354,6 +354,12 @@ async def eval_health(user: CurrentUser = Depends(require_admin)):
     latest = await db.fetchrow(
         """SELECT status, type, scheduled_at, published_at FROM evaluation_rounds
             ORDER BY scheduled_at DESC LIMIT 1""")
+    # the actual failure reason of the most recent failed round — so the admin sees WHY
+    # ("isolate ...", "EVAL_SEED_SECRET ...", a traceback) instead of guessing.
+    failed = await db.fetchrow(
+        """SELECT error, attempts FROM evaluation_rounds
+            WHERE status='failed' AND error IS NOT NULL
+            ORDER BY scheduled_at DESC LIMIT 1""")
     return {
         "last_tick_at": last_tick.isoformat() if last_tick else None,
         "age_seconds": (int(age) if age is not None else None),
@@ -363,12 +369,27 @@ async def eval_health(user: CurrentUser = Depends(require_admin)):
         "graded_last_tick": detail.get("graded"),
         "dispatch_configured": bool(s.github_dispatch_token and s.github_repo),
         "overdue_rounds": int(overdue["n"]) if overdue else 0,
+        "latest_error": (failed["error"][:400] if failed and failed["error"] else None),
         "latest_round": (None if not latest else {
             "status": latest["status"], "type": latest["type"],
             "scheduled_at": latest["scheduled_at"].isoformat(),
             "published_at": latest["published_at"].isoformat() if latest["published_at"] else None,
         }),
     }
+
+
+@router.post("/eval-retry")
+async def eval_retry(user: CurrentUser = Depends(require_admin)):
+    """Recover STUCK rounds: reset pending/failed rounds (e.g. ones that burned their attempts on
+    a since-fixed config error) back to a fresh 'pending' so the next grader tick re-grades them.
+    Only resets rounds NOT currently in-flight (lease). Fire the grader so it happens now."""
+    rows = await db.fetch(
+        """UPDATE evaluation_rounds
+              SET status='pending', attempts=0, claimed_at=NULL, claimed_by=NULL, error=NULL
+            WHERE status IN ('pending','failed')
+            RETURNING id""")
+    dispatch = await ci_dispatch.fire("evals")
+    return {"reset": len(rows), "dispatch": dispatch}
 
 
 @router.post("/contests/{cid}/end")
