@@ -1508,11 +1508,17 @@ export function CreateContestView() {
     <h3 style={{ margin: "4px 0 10px" }}>① 스텝 업 (출력 제출 · 만점 1,000,000 · 총점 반영 20%)</h3>
     <div className="card" style={{ marginBottom: 16 }}>
       {field(<>지문 (마크다운/LaTeX) {imgBtn(setStatement)}</>, <textarea rows={6} value={statement} onChange={(e) => setStatement(e.target.value)} />)}
-      {field("데이터 생성기 방식", <div className="tabs">
-        <button className={"tab" + (genType === "param" ? " active" : "")} onClick={() => setGenType("param")}>청소 로봇 전용 (파라미터)</button>
-        <button className={"tab" + (genType === "code" ? " active" : "")} onClick={() => setGenType("code")}>커스텀 코드</button>
-      </div>)}
-      {genType === "param" && <p className="muted" style={{ margin: "-8px 0 12px", fontSize: 12 }}>※ 파라미터 방식은 청소 로봇 문제 전용입니다. 다른 문제는 <b>커스텀 코드</b>를 사용하세요.</p>}
+      {apiMode
+        ? field("데이터 생성 방식", <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            선택한 문제 템플릿{curTemplate ? <> <b style={{ color: "var(--fg)" }}>{curTemplate.title}</b></> : null}의 <b>내장 생성기</b>로 만들어집니다 — <b>청소 로봇 전용이 아닙니다.</b> 아래 표에서 이 문제의 <b>케이스별 피처</b>({featSchema.map((f) => f.label).join(", ") || "—"})와 점수를 직접 지정하면 그 값으로 데이터가 생성됩니다.
+          </p>)
+        : <>
+            {field("데이터 생성기 방식", <div className="tabs">
+              <button className={"tab" + (genType === "param" ? " active" : "")} onClick={() => setGenType("param")}>청소 로봇 전용 (파라미터)</button>
+              <button className={"tab" + (genType === "code" ? " active" : "")} onClick={() => setGenType("code")}>커스텀 코드</button>
+            </div>)}
+            {genType === "param" && <p className="muted" style={{ margin: "-8px 0 12px", fontSize: 12 }}>※ 미리보기(mock) 모드의 파라미터 생성기는 청소 로봇 전용입니다. 실제 대회(API 모드)에서는 <b>선택한 문제 템플릿의 생성기</b>가 쓰입니다.</p>}
+          </>}
       {useMissions ? <>
         {genType === "param" && <p className="muted" style={{ margin: "-8px 0 12px", fontSize: 12 }}>※ 케이스마다 <b>정확한 피처값</b>과 <b>점수</b>를 지정합니다. 점수 합은 <b>1,000,000</b>이어야 합니다. (피처는 문제 템플릿이 선언)</p>}
         {field(<>스텝업 케이스 <span className="muted">— 케이스별 피처(정확값)와 점수 직접 지정</span></>,
