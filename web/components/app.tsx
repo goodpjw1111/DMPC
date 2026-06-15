@@ -1328,6 +1328,25 @@ export function CreateContestView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useSubtasks]);
+  // When the admin switches the problem template, pull THAT template's defaults into the
+  // form (statement, challenge statement, time/memory limits, base name, example seeds) so
+  // everything follows the chosen problem. Runs once per switch (a ref guards against
+  // re-clobbering the admin's edits). Step Up missions / Challenge subtasks are deliberately
+  // NOT touched here — those are (re)seeded by the schema effect above and tuned by the admin.
+  const lastTplKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!apiMode || !curTemplate || lastTplKey.current === problemKey) return;
+    lastTplKey.current = problemKey;
+    if (curTemplate.statement_md) {
+      setStatement(curTemplate.statement_md);
+      setChStatement(curTemplate.statement_md);
+    }
+    if (curTemplate.time_limit_ms) setTimeMs(curTemplate.time_limit_ms);
+    if (curTemplate.memory_limit_mb) setMemMb(curTemplate.memory_limit_mb);
+    if (curTemplate.title) setDesc(curTemplate.title);
+    if (curTemplate.given_seeds?.length) setSeedsText(curTemplate.given_seeds.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiMode, problemKey, curTemplate]);
 
   const rawSeedCount = seedsText.split(/[\s,]+/).filter((t) => t.trim().length).length;
   const seeds = Array.from(new Set(seedsText.split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)));

@@ -235,6 +235,12 @@ async def list_templates(user: CurrentUser = Depends(require_admin)):
             "simulator_key": meta.get("simulator_key"),
             "parametric": "gen_params" in meta,
             "feature_schema": meta.get("feature_schema") or [],
+            # defaults the authoring form pulls in when the admin switches templates
+            # (so the statement/limits/example seeds follow the chosen problem).
+            "statement_md": meta.get("statement_md", ""),
+            "time_limit_ms": meta.get("time_limit_ms", 2000),
+            "memory_limit_mb": meta.get("memory_limit_mb", 1024),
+            "given_seeds": meta.get("given_seeds") or [],
         })
     return out
 

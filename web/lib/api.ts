@@ -142,7 +142,11 @@ export const markNotificationsRead = () => apiPost<{ ok: boolean }>("/api/notifi
 
 // ---- admin authoring ----
 export type FeatureField = { key: string; label: string; min: number; max: number; default: number };
-export type ProblemTemplate = { problem_key: string; title: string; kind: string | null; simulator_key: string | null; parametric: boolean; feature_schema: FeatureField[] };
+export type ProblemTemplate = {
+  problem_key: string; title: string; kind: string | null; simulator_key: string | null;
+  parametric: boolean; feature_schema: FeatureField[];
+  statement_md?: string; time_limit_ms?: number; memory_limit_mb?: number; given_seeds?: number[];
+};
 export const getTemplates = () => apiGet<ProblemTemplate[]>("/api/admin/templates");
 export type GenParamsPayload = { hMin: number; hMax: number; wMin: number; wMax: number; dMin: number; dMax: number };
 export type CreateContestPayload = {
