@@ -11,9 +11,15 @@ the goal scores a fixed 100,000 penalty cost.
 Contract (shared by every problem module):
     generate(seed, params) -> str        params: rows/cols/players/obstacles/blocks
     check(input, output)   -> (cost|None, valid, message)
-    reference_cost(input)  -> float      an ACHIEVABLE cost (optimal here) for Step Up
-    sample_solution(input) -> str        an optimal move string (example output / solver)
+    reference_cost(input)  -> float      an ACHIEVABLE (non-optimal) cost for Step Up
+    sample_solution(input) -> str        a valid (non-optimal) move string (example output)
     META: dict
+
+This module ships only a NON-optimal baseline solver (_baseline). The optimal-cost solver
+is deliberately kept OUT of this public file — on a public repo it would let a contestant
+copy a top Challenge solution — and lives author-only in solver.py (gitignored). Step Up
+stays correct because the reference cost only has to be ACHIEVABLE (submit the reference
+output -> full marks), not minimal.
 
 The browser simulator (META.simulator_key = "maze") lets players play the board with
 the arrow keys; web/lib/maze.ts mirrors _apply so its cost preview matches scoring.
@@ -22,9 +28,8 @@ The server is always the sole judge.
 
 from __future__ import annotations
 
-import heapq
-import itertools
 import random
+from collections import deque
 
 WALL, BLOCK, DAO, BAZZI, GOAL, EMPTY = "#", "O", "D", "Z", "G", "."
 DIRS = {"U": (-1, 0), "D": (1, 0), "L": (0, -1), "R": (0, 1)}
@@ -137,24 +142,28 @@ def check(input_text: str, output_text: str) -> tuple[float | None, bool, str]:
     return float(MISS_COST), True, "목적지에 도달하지 못했습니다 (100,000)"
 
 
-# --- solver: optimal cost + move string (Step Up reference / example / gen check) ---
+# --- baseline solver: a VALID but NON-OPTIMAL solution (gen oracle / Step Up reference) ---
+# The optimal-cost solver is intentionally NOT in this public module (it would hand a
+# contestant a top Challenge solution to copy). It lives author-only in solver.py
+# (gitignored) for verifying optimal cost / tuning difficulty. See the module docstring.
 
-def _solve(inst: Instance, node_cap: int):
-    """Dijkstra over (dao, bazzi, blocks, turn). Returns (cost, moves) for the minimum
-    total cost to put Dao on the goal, or None if not found within node_cap."""
+def _baseline(inst: Instance, node_cap: int):
+    """COMPLETE but NON-OPTIMAL solver — BFS by move count over (dao, bazzi, blocks, turn).
+    Returns (cost, moves) for SOME move string that puts Dao on the goal, or None if none
+    is found within node_cap. Used as (1) the generation solvability oracle and (2) the
+    Step Up reference (an ACHIEVABLE cost — submitting this output earns full marks).
+    Cost counts push-chain length, so fewest-moves != least-cost: this is deliberately
+    suboptimal, so copying it does NOT win the relative-scored Challenge."""
     if inst.dao == inst.goal:
         return 0, ""
     start = (inst.dao, inst.bazzi, frozenset(inst.blocks), 0)
-    best = {start: 0}
-    cnt = itertools.count()
-    pq = [(0, next(cnt), start, "")]
+    seen = {start}
+    q = deque([(start, "", 0)])
     expanded = 0
-    while pq:
-        cost, _, st, path = heapq.heappop(pq)
+    while q:
+        st, path, cost = q.popleft()
         if st[0] == inst.goal:
             return cost, path
-        if cost > best.get(st, 1 << 60):
-            continue
         expanded += 1
         if expanded > node_cap:
             return None
@@ -167,25 +176,25 @@ def _solve(inst: Instance, node_cap: int):
                 nst = (npos, bazzi, nblocks, 0 if inst.P == 1 else 1)
             else:
                 nst = (dao, npos, nblocks, 0)
-            nc = cost + c
-            if nc < best.get(nst, 1 << 60):
-                best[nst] = nc
-                heapq.heappush(pq, (nc, next(cnt), nst, path + m))
+            if nst in seen:
+                continue
+            seen.add(nst)
+            q.append((nst, path + m, cost + c))
     return None
 
 
 def reference_cost(input_text: str) -> float:
-    """Optimal achievable cost — full marks at this cost (Step Up). Generation verified
-    solvability with the same model, so the solver finds it; fall back defensively."""
+    """An ACHIEVABLE (non-optimal) cost — full marks at or below this (Step Up). Generation
+    verified solvability with the same model, so the baseline finds it; fall back defensively."""
     inst = parse(input_text)
-    res = _solve(inst, REF_NODE_CAP)
+    res = _baseline(inst, REF_NODE_CAP)
     return float(res[0]) if res else float(MISS_COST)
 
 
 def sample_solution(input_text: str) -> str:
-    """An optimal move string (used as the statement's example output)."""
+    """A valid (non-optimal) move string — a baseline example output, NOT an optimal one."""
     inst = parse(input_text)
-    res = _solve(inst, REF_NODE_CAP)
+    res = _baseline(inst, REF_NODE_CAP)
     return res[1] if res else ""
 
 
@@ -225,7 +234,7 @@ def generate(seed: int, params: dict | None = None) -> str:
 
     def solvable() -> bool:
         inst = Instance(R, C, P, walls, blocks, dao, bazzi, goal)
-        return _solve(inst, GEN_NODE_CAP) is not None
+        return _baseline(inst, GEN_NODE_CAP) is not None
 
     def place(target_set: set, count: int) -> None:
         cand = [x for x in cells if x not in walls and x not in blocks and x not in occupied]

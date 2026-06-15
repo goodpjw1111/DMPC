@@ -32,3 +32,7 @@ Thumbs.db
 pgdata/
 *.log
 *.tsbuildinfo
+
+# author-only optimal solvers — kept OUT of the public repo so contestants can't copy an
+# optimal Challenge solution (the public problem.py ships only a non-optimal baseline).
+problems/*/solver.py
