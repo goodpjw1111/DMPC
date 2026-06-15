@@ -99,15 +99,15 @@ def test_case_insensitive_domain():
 
 
 # --- allowlist exceptions (operator gmail etc.) ---------------------------
-ALLOW = frozenset({"goodpjw1111@gmail.com"})
+ALLOW = frozenset({"operator@gmail.com"})
 
 
 def test_allowlisted_email_passes_without_domain_or_hd():
     # exact allowlist exception: a personal gmail (no hd) is permitted.
-    check_claims(good_claims(email="goodpjw1111@gmail.com", hd=None),
+    check_claims(good_claims(email="operator@gmail.com", hd=None),
                  allowed_domain=DOMAIN, expected_nonce=NONCE, allow_emails=ALLOW)
     # case-insensitive match against the allowlist
-    check_claims(good_claims(email="GoodPJW1111@Gmail.com", hd=None),
+    check_claims(good_claims(email="Operator@Gmail.com", hd=None),
                  allowed_domain=DOMAIN, expected_nonce=NONCE, allow_emails=ALLOW)
 
 
@@ -124,7 +124,7 @@ def test_allowlist_still_requires_verified_email_and_nonce():
     # the exception skips domain/hd ONLY — verification + nonce stay enforced.
     for bad in (dict(email_verified=False), dict(nonce="replayed")):
         try:
-            check_claims(good_claims(email="goodpjw1111@gmail.com", hd=None, **bad),
+            check_claims(good_claims(email="operator@gmail.com", hd=None, **bad),
                          allowed_domain=DOMAIN, expected_nonce=NONCE, allow_emails=ALLOW)
         except AuthError:
             continue

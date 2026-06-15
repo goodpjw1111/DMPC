@@ -24,8 +24,10 @@ services:
       - { key: COOKIE_SAMESITE,     value: lax }          # single-origin via Vercel proxy
       - { key: CSP_REPORT_ONLY,     value: "false" }
       - { key: ALLOWED_EMAIL_DOMAIN, value: dimigo.hs.kr }
-      - { key: ALLOW_EMAILS,        value: "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com" }
-      - { key: ADMIN_EMAILS,        value: "goodpjw2008@dimigo.hs.kr,goodpjw1111@gmail.com" }
+      # --- operator emails: filled in the dashboard, kept OUT of the repo -------
+      - { key: ALLOW_EMAILS,        sync: false }   # gmail operator exceptions (comma-separated)
+      - { key: ADMIN_EMAILS,        sync: false }   # auto-admin on login (comma-separated)
+      - { key: TESTER_EMAILS,       sync: false }   # tester-only (draft) access (comma-separated)
       # --- fill these in the dashboard (secrets / your URLs) -------------------
       - { key: DATABASE_URL,        sync: false }   # Neon connection string (?sslmode=require)
       - { key: SECRET_KEY,          sync: false }   # python -c "import secrets;print(secrets.token_urlsafe(48))"

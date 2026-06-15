@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))   # import app.*
 from app.routers.auth import admin_role_for, dev_email_ok  # noqa: E402
 
 DOMAIN = "dimigo.hs.kr"
-ADMINS = {"goodpjw2008@dimigo.hs.kr"}
+ADMINS = {"admin@dimigo.hs.kr"}
 
 
 def test_accepts_allowed_domain():
@@ -40,28 +40,28 @@ def test_empty_domain_allows_any_at_address():
 
 
 def test_allowlist_exception_bypasses_domain():
-    allow = {"goodpjw1111@gmail.com"}
-    assert dev_email_ok("goodpjw1111@gmail.com", DOMAIN, allow)        # exception passes
-    assert dev_email_ok("  GoodPJW1111@Gmail.com ", DOMAIN, allow)     # trim + case
+    allow = {"operator@gmail.com"}
+    assert dev_email_ok("operator@gmail.com", DOMAIN, allow)        # exception passes
+    assert dev_email_ok("  Operator@Gmail.com ", DOMAIN, allow)     # trim + case
     assert not dev_email_ok("other@gmail.com", DOMAIN, allow)          # not on the list
     assert dev_email_ok("a@dimigo.hs.kr", DOMAIN, allow)               # domain still works
 
 
 def test_admin_role_for_bootstrap_email():
-    assert admin_role_for("goodpjw2008@dimigo.hs.kr", ADMINS) == "admin"
-    assert admin_role_for("  GoodpJW2008@Dimigo.HS.KR ", ADMINS) == "admin"   # trim + case
+    assert admin_role_for("admin@dimigo.hs.kr", ADMINS) == "admin"
+    assert admin_role_for("  Admin@Dimigo.HS.KR ", ADMINS) == "admin"   # trim + case
 
 
 def test_admin_role_for_non_admin_is_student():
     assert admin_role_for("someone@dimigo.hs.kr", ADMINS) == "student"
-    assert admin_role_for("goodpjw2008@dimigo.hs.kr", set()) == "student"     # empty list -> nobody
+    assert admin_role_for("admin@dimigo.hs.kr", set()) == "student"     # empty list -> nobody
 
 
 def test_admin_role_for_gmail_exception():
     # the allowlisted gmail can also be a bootstrap admin
-    admins = {"goodpjw2008@dimigo.hs.kr", "goodpjw1111@gmail.com"}
-    assert admin_role_for("goodpjw1111@gmail.com", admins) == "admin"
-    assert admin_role_for("  GoodPJW1111@Gmail.com ", admins) == "admin"
+    admins = {"admin@dimigo.hs.kr", "operator@gmail.com"}
+    assert admin_role_for("operator@gmail.com", admins) == "admin"
+    assert admin_role_for("  Operator@Gmail.com ", admins) == "admin"
 
 
 if __name__ == "__main__":

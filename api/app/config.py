@@ -28,20 +28,22 @@ class Settings(BaseSettings):
     allowed_email_domain: str = "dimigo.hs.kr"
     # Comma-separated EXACT emails allowed to log in even though they are NOT in the
     # domain above (operator exceptions). The OIDC layer skips the domain/hd gate for
-    # these, but still requires a Google-verified email. Override via ALLOW_EMAILS.
-    allow_emails: str = "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com"
+    # these, but still requires a Google-verified email. Empty by default — set the real
+    # addresses via the ALLOW_EMAILS env var (keeps personal emails out of source).
+    allow_emails: str = ""
 
     # --- bootstrap admins -------------------------------------------------
     # Comma-separated emails auto-granted the 'admin' role on login (idempotent;
     # promotes an existing account, never demotes). Lets the first operator
-    # self-provision admin without a manual SQL step. Override via ADMIN_EMAILS.
-    admin_emails: str = "goodpjw2008@dimigo.hs.kr,goodpjw1111@gmail.com"
+    # self-provision admin without a manual SQL step. Empty by default — set via the
+    # ADMIN_EMAILS env var (keeps personal emails out of source).
+    admin_emails: str = ""
 
     # --- testers ----------------------------------------------------------
     # Emails that may access TESTER-ONLY (draft) contests — create/preview a new problem
-    # mid-contest without exposing it to participants. Admins are testers too. Override
-    # via TESTER_EMAILS.
-    tester_emails: str = "goodpjw1111@gmail.com,firemouse2008@gmail.com,goodpjw8516@gmail.com"
+    # mid-contest without exposing it to participants. Admins are testers too. Empty by
+    # default — set via the TESTER_EMAILS env var (keeps personal emails out of source).
+    tester_emails: str = ""
 
     # --- Google OIDC ------------------------------------------------------
     google_client_id: str = ""
@@ -69,7 +71,7 @@ class Settings(BaseSettings):
 
     # --- CI dispatch (optional): auto-trigger grading workflows on submit/eval ----
     github_dispatch_token: str = ""    # PAT (fine-grained Contents:write, or classic `repo`); empty = manual only
-    github_repo: str = ""              # "owner/name", e.g. goodpjw1111/DMPC
+    github_repo: str = ""              # "owner/name" (set via GITHUB_REPO env)
 
     # --- security headers -------------------------------------------------
     csp_report_only: bool = True
