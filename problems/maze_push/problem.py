@@ -182,19 +182,43 @@ def _solve(inst: Instance, node_cap: int):
     return None
 
 
+_REF_CACHE: dict[str, float] = {}     # reference_cost is deterministic per input + can be costly
+                                      # (an exact solve); memoize so re-grading a mission is instant
+
+
 def reference_cost(input_text: str) -> float:
-    """Optimal achievable cost — full marks at this cost (Step Up). Generation verified
-    solvability with the same model, so the solver finds it; fall back defensively."""
+    """Achievable cost for full marks (Step Up). The exact optimum when the board is small enough
+    to solve (true for sensible Step-Up sizes); for a board too dense to solve exactly (Sokoban is
+    intractable in general — use such boards in the Challenge, not Step Up) it falls back to the
+    constructive corridor solution's cost, an achievable upper bound, instead of the miss penalty.
+    Memoized per input: a mission is graded on every submission, so the costly solve runs once."""
+    cached = _REF_CACHE.get(input_text)
+    if cached is not None:
+        return cached
     inst = parse(input_text)
     res = _solve(inst, REF_NODE_CAP)
-    return float(res[0]) if res else float(MISS_COST)
+    if res:
+        out = float(res[0])
+    else:
+        w = corridor_witness(inst)
+        out = float(MISS_COST)
+        if w is not None:
+            cost, valid, _ = check(input_text, w)
+            if valid and cost < MISS_COST:
+                out = float(cost)
+    if len(_REF_CACHE) > 1024:
+        _REF_CACHE.clear()
+    _REF_CACHE[input_text] = out
+    return out
 
 
 def sample_solution(input_text: str) -> str:
-    """An optimal move string (used as the statement's example output)."""
+    """An (optimal when solvable, else achievable) move string — the statement's example output."""
     inst = parse(input_text)
     res = _solve(inst, REF_NODE_CAP)
-    return res[1] if res else ""
+    if res:
+        return res[1]
+    return corridor_witness(inst) or ""
 
 
 # --- generator: solvable-by-construction (add only if still solvable) -------
@@ -219,22 +243,108 @@ def _pick(rng: random.Random, p: dict, key: str) -> int:
 GEN_RETRIES = 6                   # re-roll a board up to this many times to get one needing a push
 
 
-def _reachable_without_push(R, C, walls, blocks, dao, goal) -> bool:
-    """Can Dao reach the goal moving only through EMPTY cells (no pushing)? If so the case is
-    WEAK — blocks aren't needed. Used to prefer boards where a push is actually required."""
-    blocked = walls | blocks
-    seen = {dao}
-    q = deque([dao])
+def _bfs_reach(R, C, blocked: set, src, dst) -> bool:
+    """4-dir block-free reachability src -> dst, treating every cell in `blocked` as impassable.
+    Cheap (O(cells)) — used to PROVE a board solvable by construction without a full Dijkstra,
+    which is unreliable on a large barriered board within the generation node cap."""
+    if src == dst:
+        return True
+    seen = {src}
+    q = deque([src])
     while q:
         cur = q.popleft()
-        if cur == goal:
-            return True
         for dr, dc in DIRS.values():
             nxt = (cur[0] + dr, cur[1] + dc)
             if 0 <= nxt[0] < R and 0 <= nxt[1] < C and nxt not in blocked and nxt not in seen:
+                if nxt == dst:
+                    return True
                 seen.add(nxt)
                 q.append(nxt)
     return False
+
+
+def _reachable_without_push(R, C, walls, blocks, dao, goal) -> bool:
+    """Can Dao reach the goal moving only through EMPTY cells (no pushing)? If so the case is
+    WEAK — blocks aren't needed. Used to prefer boards where a push is actually required."""
+    return _bfs_reach(R, C, walls | blocks, dao, goal)
+
+
+_CHAR = {(-1, 0): "U", (1, 0): "D", (0, -1): "L", (0, 1): "R"}
+
+
+def _bfs_path(R, C, blocked: set, src, dst):
+    """Shortest 4-dir block-free path src -> dst as a list of cells (incl. both ends), or None."""
+    if src == dst:
+        return [src]
+    prev = {src: None}
+    q = deque([src])
+    while q:
+        cur = q.popleft()
+        for dr, dc in DIRS.values():
+            nxt = (cur[0] + dr, cur[1] + dc)
+            if 0 <= nxt[0] < R and 0 <= nxt[1] < C and nxt not in blocked and nxt not in prev:
+                prev[nxt] = cur
+                if nxt == dst:
+                    path = [nxt]
+                    while prev[path[-1]] is not None:
+                        path.append(prev[path[-1]])
+                    return path[::-1]
+                q.append(nxt)
+    return None
+
+
+def _moves_of(path) -> list:
+    return [_CHAR[(b[0] - a[0], b[1] - a[1])] for a, b in zip(path, path[1:])]
+
+
+def corridor_witness(inst: Instance):
+    """A VALID (not necessarily optimal) solution for a board carrying the generator's chokepoint
+    barrier: Dao walks to the cell behind the gap, pushes the gap block one step, then walks on to
+    the goal. Serves as a solvability WITNESS and as the Step-Up reference FALLBACK when a board is
+    too dense for an exact Sokoban solve (which is intractable in general). Returns a move string,
+    or None if the board carries no detectable barrier."""
+    R, C = inst.R, inst.C
+    walls, blocks, dao, goal, bazzi, P = inst.walls, inst.blocks, inst.dao, inst.goal, inst.bazzi, inst.P
+    # locate the barrier anti-diagonal: line r+c==K that is all walls except exactly one block.
+    line = None
+    for K in range(1, R + C - 2):
+        cells = [(r, K - r) for r in range(max(0, K - (C - 1)), min(R, K + 1))]
+        nb = sum(x in blocks for x in cells)
+        no = sum(x not in walls and x not in blocks and x not in (dao, goal) and x != bazzi for x in cells)
+        if nb == 1 and no == 0 and any(x in walls for x in cells):
+            line = cells
+            break
+    if line is None:
+        return None
+    gap = next(x for x in line if x in blocks)
+    gr, gc = gap
+    occupied = {dao, goal} | ({bazzi} if P == 2 else set())
+    for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
+        if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
+            continue
+        if bd in walls or bd in blocks or ah in walls or ah in blocks:
+            continue
+        if ah in occupied or bd in occupied:    # the block can't be pushed onto a player/goal cell
+            continue
+        p1 = _bfs_path(R, C, walls | blocks, dao, bd)
+        if p1 is None:
+            continue
+        p2 = _bfs_path(R, C, walls | ((blocks - {gap}) | {ah}), gap, goal)
+        if p2 is None:
+            continue
+        dao_moves = _moves_of(p1) + [_CHAR[(gr - bd[0], gc - bd[1])]] + _moves_of(p2)
+        if P == 1:
+            return "".join(dao_moves)
+        # C=2: Bazzi (on the border) "passes" by moving outward; interleave one pass after each
+        # Dao move except the last (Dao reaching the goal on its turn ends the run).
+        bp = "U" if bazzi[0] == 0 else "D" if bazzi[0] == R - 1 else "L" if bazzi[1] == 0 else "R"
+        out = []
+        for i, m in enumerate(dao_moves):
+            out.append(m)
+            if i < len(dao_moves) - 1:
+                out.append(bp)
+        return "".join(out)
+    return None
 
 
 def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
@@ -271,7 +381,7 @@ def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
         inst = Instance(R, C, 1, walls, blocks, dao, bazzi, goal)
         return _solve(inst, GEN_NODE_CAP) is not None
 
-    def place(target_set: set, count: int) -> None:
+    def place(target_set: set, count: int, ok) -> None:
         cand = [x for x in cells if x not in walls and x not in blocks and x not in occupied]
         rng.shuffle(cand)
         done, i = 0, 0
@@ -279,13 +389,67 @@ def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
             x = cand[i]
             i += 1
             target_set.add(x)
-            if solvable():            # keep only placements that preserve solvability
+            if ok():                  # keep only placements that preserve solvability
                 done += 1
             else:
                 target_set.discard(x)
 
-    place(walls, W)                   # obstacles first (static), then pushable blocks
-    place(blocks, B)
+    def cut():
+        """Force a push: wall off an anti-diagonal BARRIER between Dao's corner and the goal's,
+        leaving exactly ONE gap plugged by a single pushable BLOCK. Every route to the goal must
+        cross r+c == K, and that whole line is walls except the gap (a block) — so NO block-free
+        walk can exist on a board of ANY size (this is what makes even a 30x30 non-trivial). The
+        gap is biased toward an END of the barrier so Dao must detour along it (a longer optimal
+        path). Solvability is proven CONSTRUCTIVELY with cheap BFS (Dao walks to the cell behind
+        the gap, pushes the block one step ahead, then walks on to the goal) — a full Dijkstra is
+        unreliable on a big barriered board within the generation node cap. Returns the solution
+        anchors (gap, behind, ahead), or None if no workable barrier was found."""
+        K = (R + C - 2) // 2
+        if P == 2 and bazzi[0] + bazzi[1] == K:      # a player cell on the band = an open gap
+            K = K - 1 if K - 1 >= 1 else K + 1
+        band = [(r, c) for (r, c) in cells if r + c == K and (r, c) not in occupied]
+        if len(band) < 2:                            # too small to hold a barrier AND a gap
+            return None
+        rng.shuffle(band)
+        band.sort(key=lambda x: -abs(x[0] - x[1]))   # try gaps at the band's ends first (longer detour)
+        for gap in band:
+            gr, gc = gap
+            wall_cells = [x for x in band if x != gap]
+            barrier = set(wall_cells)
+            for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
+                if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
+                    continue
+                if bd in occupied or ah in occupied:
+                    continue
+                if not _bfs_reach(R, C, barrier | {gap}, dao, bd):     # Dao can reach behind the gap
+                    continue
+                if not _bfs_reach(R, C, barrier | {ah}, gap, goal):    # ...and on to the goal post-push
+                    continue
+                walls.update(wall_cells)
+                blocks.add(gap)
+                return gap, bd, ah
+        return None
+
+    chokepoint = cut()                # build the forced-push barrier; keep its solution anchors
+
+    if chokepoint:
+        gap, bd, ah = chokepoint
+
+        def ok() -> bool:
+            # the barrier's own solution must survive each random placement: Dao reaches `bd`,
+            # pushes the gap block to `ah`, then reaches the goal — all block-free (cheap BFS).
+            blk = walls | blocks
+            if ah in blk:                                          # ahead must stay free for the push
+                return False
+            if not _bfs_reach(R, C, blk, dao, bd):                 # walk to behind (gap block in blk)
+                return False
+            after = (blocks - {gap}) | {ah}                        # board right after the push
+            return _bfs_reach(R, C, walls | after, gap, goal)
+    else:
+        ok = solvable                 # no barrier (tiny board): fall back to the Dijkstra oracle
+
+    place(walls, max(0, W - len(walls)), ok)      # top up to the authored obstacle/block totals,
+    place(blocks, max(0, B - len(blocks)), ok)    # counting the barrier's walls/block toward them
     board = _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
     # `requires_push` = Dao can't reach the goal through empty cells alone (a block is in the way)
     return board, not _reachable_without_push(R, C, walls, blocks, dao, goal), R * C

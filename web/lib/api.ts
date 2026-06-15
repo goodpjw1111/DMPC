@@ -104,6 +104,9 @@ export type MyEvalCase = {
   runtime_ms: number | null; case_score: number | null; case_rank: number | null;
 };
 export type MyEval = {
+  // status of the latest round if it isn't a published 'done' one yet (pending/grading/failed) —
+  // lets the eval tab say "채점 대기 중" after 지금 평가 실행 instead of looking empty. null when up to date.
+  pending?: string | null;
   round: { id: string; type: string; scheduled_at: string; published_at: string } | null;
   standing: { stepup_score: number; challenge_score: number; total_score: number; rank: number | null } | null;
   cases: MyEvalCase[];
@@ -119,6 +122,9 @@ export const getContestDetail = (cid: string) => apiGet<ApiContestDetail>(`/api/
 export const getProblem = (pid: string) => apiGet<ApiProblem>(`/api/problems/${pid}`);
 export type ProblemExample = { example_input: string | null; example_output: string | null };
 export const getProblemExample = (pid: string) => apiGet<ProblemExample>(`/api/problems/${pid}/example`);
+// Step Up "만점 기준 비용" per mission: { seed(string): optimal cost | null }. Lazy + cached server-side.
+export type RefCosts = { ref_costs: Record<string, number | null> };
+export const getProblemRefCosts = (pid: string) => apiGet<RefCosts>(`/api/problems/${pid}/ref-costs`);
 export const getStandings = (cid: string) => apiGet<StandingRow[]>(`/api/contests/${cid}/standings`);
 export const getMyEval = (cid: string) => apiGet<MyEval>(`/api/contests/${cid}/my-eval`);
 export const missionInputUrl = (pid: string, seed: number) => `${API_BASE}/api/problems/${pid}/missions/${seed}/input`;

@@ -156,8 +156,16 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
            ORDER BY scheduled_at DESC LIMIT 1""",
         cid,
     )
+    # Surface a not-yet-published round so the eval tab can show "채점 대기/진행/실패" instead of
+    # looking empty after an admin clicks "지금 평가 실행" — grading runs async on Actions evals,
+    # so the round sits 'pending' (or 'failed') until that workflow finishes.
+    latest = await db.fetchrow(
+        "SELECT status FROM evaluation_rounds WHERE contest_id=$1 ORDER BY scheduled_at DESC LIMIT 1",
+        cid,
+    )
+    pending = latest["status"] if (latest and latest["status"] != "done") else None
     if not rnd:
-        return {"round": None, "standing": None, "cases": []}
+        return {"round": None, "standing": None, "cases": [], "pending": pending}
     mine = await db.fetchrow(
         """SELECT stepup_score, challenge_score, total_score, rank
            FROM standings WHERE round_id=$1 AND user_id=$2""",
@@ -170,6 +178,7 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
         rnd["id"], user.id,
     )
     return {
+        "pending": pending,
         "round": {"id": str(rnd["id"]), "type": rnd["type"],
                   "scheduled_at": rnd["scheduled_at"].isoformat(),
                   "published_at": rnd["published_at"].isoformat()},
@@ -256,6 +265,34 @@ async def problem_example(pid: str, user: CurrentUser = Depends(get_current_user
             _EXAMPLE_CACHE.clear()
         _EXAMPLE_CACHE[pid] = cached
     return cached
+
+
+# Per-mission optimal cost for Step Up — the "만점 기준 비용" (cost at/below which a case earns
+# full marks). The optimal solve is expensive, so compute once and cache per problem id, just
+# like the example I/O above. Served outside problem_detail so the statement stays instant.
+_REFCOST_CACHE: dict[str, dict[str, float | None]] = {}
+
+
+@router.get("/problems/{pid}/ref-costs")
+async def problem_ref_costs(pid: str, user: CurrentUser = Depends(get_current_user)):
+    p = await _released_problem(pid, allow_unreleased=user.is_tester)
+    if p["kind"] != "stepup":
+        return {"ref_costs": {}}
+    cached = _REFCOST_CACHE.get(pid)
+    if cached is None:
+        mod = load_problem(p["problem_key"])
+        meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
+        cached = {}
+        for s in (meta.get("given_seeds") or []):
+            try:
+                cost = mod.reference_cost(mod.generate(s, mission_params(meta, s)))
+                cached[str(s)] = (None if cost is None else float(cost))
+            except Exception:               # noqa: BLE001 — best-effort; a failed solve omits that case
+                cached[str(s)] = None
+        if len(_REFCOST_CACHE) > 512:
+            _REFCOST_CACHE.clear()
+        _REFCOST_CACHE[pid] = cached
+    return {"ref_costs": cached}
 
 
 @router.get("/problems/{pid}/missions/{seed}/input")

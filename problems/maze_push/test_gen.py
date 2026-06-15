@@ -83,17 +83,14 @@ def test_c2_bazzi_starts_on_border():
 
 
 def test_c2_constructively_solvable():
-    # Dao-alone solution + Bazzi border-passes must reach the goal for the generated C=2 board.
+    # the generator's chokepoint corridor yields a VALID C=2 solution (Dao path + Bazzi passes)
+    # reaching the goal — the solvability witness (an exact Sokoban solve is intractable here).
     for seed in range(12):
         g = P.generate(seed, {"rows": 8, "cols": 8, "players": 2, "obstacles": 6, "blocks": 7})
-        inst = P.parse(g)
-        c1 = P._solve(P.Instance(inst.R, inst.C, 1, inst.walls, inst.blocks, inst.dao, inst.bazzi, inst.goal), P.GEN_NODE_CAP)
-        assert c1, (seed, "no dao-alone solution")
-        br, bc = inst.bazzi
-        bnull = "U" if br == 0 else "D" if br == inst.R - 1 else "L" if bc == 0 else "R"
-        out = "".join(d + (bnull if i < len(c1[1]) - 1 else "") for i, d in enumerate(c1[1]))
-        cost, valid, _ = P.check(g, out)
-        assert valid and cost < P.MISS_COST, (seed, cost)
+        w = P.corridor_witness(P.parse(g))
+        assert w, (seed, "no corridor witness")
+        cost, valid, _ = P.check(g, w)
+        assert valid and cost < P.MISS_COST, (seed, cost, valid)
 
 
 def test_dao_goal_fixed_corners():
@@ -155,10 +152,41 @@ def test_block_can_pass_through_goal():
 
 
 def test_raised_density_places_past_old_max():
-    # obstacle/block maxes were raised well past the old 60; a dense board places them and stays solvable.
+    # obstacle/block maxes were raised well past the old 60; a dense board places them in full.
     g = P.generate(1, {"rows": 20, "cols": 20, "players": 1, "obstacles": 150, "blocks": 80})
     assert g.count("#") > 60 and g.count("O") > 60, (g.count("#"), g.count("O"))
-    assert P._solve(P.parse(g), P.GEN_NODE_CAP) is not None
+    # an exact Sokoban solve is intractable at this density (that's why such boards belong in the
+    # Challenge, not Step Up). Solvability is guaranteed by construction — verified via the witness.
+    w = P.corridor_witness(P.parse(g))
+    assert w is not None
+    cost, valid, _ = P.check(g, w)
+    assert valid and cost < P.MISS_COST, (cost, valid)
+
+
+def test_cut_forces_push_all_sizes():
+    # the chokepoint barrier guarantees a push is required on boards of ANY size (incl. 30x30),
+    # and the corridor witness reaches the goal on every one of them.
+    for (R, C, Pl, W, B) in [(7, 7, 1, 5, 8), (10, 10, 2, 10, 20), (20, 20, 1, 80, 80),
+                             (30, 30, 1, 100, 200), (30, 30, 2, 150, 250)]:
+        for seed in range(3):
+            g = P.generate(seed, {"rows": R, "cols": C, "players": Pl, "obstacles": W, "blocks": B})
+            inst = P.parse(g)
+            assert not P._reachable_without_push(inst.R, inst.C, inst.walls, inst.blocks, inst.dao, inst.goal), (R, C, seed)
+            w = P.corridor_witness(inst)
+            cost, valid, _ = P.check(g, w or "")
+            assert w and valid and cost < P.MISS_COST, (R, C, seed, cost, valid)
+
+
+def test_stepup_reference_is_consistent():
+    # Step Up needs an EXACT full-marks reference; on solver-tractable sizes the optimum is found
+    # and the solver agrees with the checker (sample_solution costs exactly reference_cost).
+    for (R, C, Pl, W, B) in [(5, 5, 1, 5, 8), (6, 6, 2, 5, 10), (8, 8, 1, 4, 8)]:
+        for seed in range(4):
+            g = P.generate(seed, {"rows": R, "cols": C, "players": Pl, "obstacles": W, "blocks": B})
+            ref = P.reference_cost(g)
+            assert ref < P.MISS_COST, (R, C, seed, ref)
+            cost, valid, _ = P.check(g, P.sample_solution(g))
+            assert valid and cost == ref, (R, C, seed, cost, ref)
 
 
 if __name__ == "__main__":

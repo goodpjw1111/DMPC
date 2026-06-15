@@ -20,7 +20,7 @@ import {
 import { registerSimulator, getSimulator } from "@/lib/simulators";
 import { parseMaze, replayMaze, MAZE_KEYS, type MazeInst, type MazeState } from "@/lib/maze";
 import {
-  getContestDetail, getProblem, getProblemExample, getStandings, getMyEval, getMissionInput,
+  getContestDetail, getProblem, getProblemExample, getProblemRefCosts, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
   getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest, deleteContest,
@@ -1022,6 +1022,8 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   const [chHist, setChHist] = useState<ChallengeSubmission[] | null>(null);
   const [myEval, setMyEval] = useState<MyEval | null>(null);
   const [evalErr, setEvalErr] = useState("");
+  // Step Up "만점 기준 비용" per mission seed (optimal solve, lazy + cached server-side). null = 미계산.
+  const [refCosts, setRefCosts] = useState<Record<string, number | null> | null>(null);
 
   // load the problem (and, for stepup, its mission inputs so the simulator works).
   useEffect(() => {
@@ -1081,6 +1083,15 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightTab, pid]);
 
+  // Step Up: fetch the per-mission "만점 기준 비용" once the problem id is known. The optimal
+  // solve is expensive, so it's lazy + cached server-side; a failure just leaves it unshown.
+  useEffect(() => {
+    if (!pid || !isStep) return;
+    let on = true;
+    getProblemRefCosts(pid).then((d) => on && setRefCosts(d.ref_costs)).catch(() => {});
+    return () => { on = false; };
+  }, [pid, isStep]);
+
   async function submitStep() {
     if (!pid || busyRef.current) return;          // busyRef blocks a 2nd click before re-render
     const m = missions[mission];
@@ -1128,6 +1139,8 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   const rightTabs: [RightTab, string][] = isStep ? [["submit", "제출"], ["history", "제출 내역"]] : [["submit", "제출"], ["history", "제출 내역"], ["eval", "중간 평가"]];
   const curSeed = missions[mission]?.seed;
   const curBudget = missions[mission]?.budget ?? 0;
+  // "만점 기준 비용": cost at/below which this case earns full marks. undefined = 아직 미계산.
+  const curRef = (curSeed != null && refCosts) ? refCosts[String(curSeed)] : undefined;
 
   return <div className="solve">
     <div className="pane left">
@@ -1161,6 +1174,12 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           <textarea rows={12} value={stepOutput} onChange={(e) => setStepOutput(e.target.value)} placeholder="여기에 출력(이동 문자열)을 붙여넣거나, 왼쪽 시뮬레이터로 만드세요" />
           <div className="submitbar" style={{ flexDirection: "column", alignItems: "stretch", gap: 10, paddingLeft: 0, paddingRight: 0, borderTop: "none" }}>
             <div className="row" style={{ gap: 10 }}><span className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>제출 대상</span><MissionSelect mission={mission} setMission={setMission} missions={missions} /><span className="muted" style={{ fontSize: 12 }}>미션별 개별 제출</span></div>
+            <div className="row" style={{ gap: 14, fontSize: 12, flexWrap: "wrap" }}>
+              <span className="muted">배점(만점) <b style={{ color: "var(--fg)" }}>{fmt(curBudget)}</b></span>
+              <span className="muted">만점 기준 비용 {curRef == null
+                ? <b style={{ color: "var(--muted)" }}>{refCosts ? "—" : "계산 중…"}</b>
+                : <>≤ <b style={{ color: "var(--fg)" }}>{fmt(curRef)}</b></>}</span>
+            </div>
             <div className="row" style={{ gap: 10 }}>
               <a className="btn ghost" style={{ flex: 1, textAlign: "center" }} href={pid && curSeed != null ? `/api/problems/${pid}/missions/${curSeed}/input` : undefined} target="_blank" rel="noreferrer">입력 다운로드</a>
               <button className="btn" style={{ flex: 1 }} disabled={!live || busy} onClick={submitStep}>{busy ? "채점 중…" : "⚲ 제출"}</button>
@@ -1206,7 +1225,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
           </div>
         </>}
 
-        {rightTab === "history" && isStep && <ApiStepHistory hist={stepHist} mission={mission} setMission={setMission} missions={missions} seed={curSeed} budget={curBudget} />}
+        {rightTab === "history" && isStep && <ApiStepHistory hist={stepHist} mission={mission} setMission={setMission} missions={missions} seed={curSeed} budget={curBudget} refCost={curRef} />}
         {rightTab === "history" && !isStep && <ApiChHistory hist={chHist} />}
         {rightTab === "eval" && <>
           <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
@@ -1225,14 +1244,15 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   </div>;
 }
 
-function ApiStepHistory({ hist, mission, setMission, missions, seed, budget }:
-  { hist: StepupSubmission[] | null; mission: number; setMission: (i: number) => void; missions: ApiMissionFull[]; seed: number | undefined; budget: number }) {
+function ApiStepHistory({ hist, mission, setMission, missions, seed, budget, refCost }:
+  { hist: StepupSubmission[] | null; mission: number; setMission: (i: number) => void; missions: ApiMissionFull[]; seed: number | undefined; budget: number; refCost?: number | null }) {
   if (hist === null) return <ApiLoading label="제출 내역 불러오는 중…" />;
   const mNo = missions[mission]?.mission ?? 1;
   const rows = hist.filter((h) => h.mission_seed === seed);
   return <>
     <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}><h3 style={{ margin: 0 }}>미션 {mNo} 제출 내역</h3><MissionSelect mission={mission} setMission={setMission} missions={missions} /></div>
-    <p className="muted" style={{ margin: "0 0 8px", fontSize: 12 }}>스텝 업은 <b>미션마다 따로</b> 제출·채점됩니다. 점수는 즉시 확정됩니다.</p>
+    <p className="muted" style={{ margin: "0 0 4px", fontSize: 12 }}>스텝 업은 <b>미션마다 따로</b> 제출·채점됩니다. 점수는 즉시 확정됩니다.</p>
+    <p className="muted" style={{ margin: "0 0 8px", fontSize: 12 }}>배점(만점) <b style={{ color: "var(--fg)" }}>{fmt(budget)}</b>{refCost != null && <> · 만점 기준 비용 ≤ <b style={{ color: "var(--fg)" }}>{fmt(refCost)}</b></>}</p>
     <table><tbody><tr><th>제출 시각</th><th>비용</th><th>결과</th></tr>
       {rows.length ? rows.map((h) => <tr key={h.id}><td className="muted">{fmtAt(h.created_at)}</td><td>{h.valid ? <b>{h.cost}</b> : <span className="muted">무효</span>}</td><td style={{ minWidth: 90 }}><Bar g={h.score} t={budget || 1} sm /></td></tr>)
         : <tr><td colSpan={3} className="muted" style={{ padding: 16, textAlign: "center" }}>이 미션엔 아직 제출이 없어요.</td></tr>}
@@ -1263,12 +1283,32 @@ function ApiChHistory({ hist }: { hist: ChallengeSubmission[] | null }) {
 const VERDICT_KO: Record<string, string> = {
   ok: "정상", tle: "시간 초과", mle: "메모리 초과", re: "런타임 오류", compile_error: "컴파일 오류", illegal: "무효", internal: "내부 오류",
 };
+// A round exists but isn't a published result yet. Grading runs asynchronously on the
+// GitHub Actions `evals` workflow, so after "지금 평가 실행" the round sits here until that
+// workflow finishes (auto-dispatch, ~15분 주기 cron, 또는 수동 실행) — then ↻ 새로고침.
+function PendingEval({ status }: { status: string }) {
+  const failed = status === "failed";
+  return <div className="card" style={{ borderColor: failed ? "var(--bad)" : "var(--line2)" }}>
+    <b>{failed ? "⚠️ 채점 실패" : "⏳ 채점 대기 중"}</b>
+    <p className="muted" style={{ margin: "8px 0 0", lineHeight: 1.6 }}>
+      {failed
+        ? "평가 라운드가 만들어졌지만 채점에 실패했어요. GitHub Actions의 evals 워크플로 로그를 확인하고 다시 실행해 주세요."
+        : <>평가 라운드가 만들어졌고, 채점은 GitHub Actions의 <b>evals</b> 워크플로가 비동기로 수행합니다.
+          워크플로가 끝나면 결과가 공개돼요 — 잠시 후 <b>↻ 새로고침</b>을 눌러 주세요.</>}
+    </p>
+  </div>;
+}
+
 function ApiEval({ data, err }: { data: MyEval | null; err: string }) {
   if (err) return <ApiErrorCard msg={err} />;
   if (data === null) return <ApiLoading label="중간 평가 불러오는 중…" />;
-  if (!data.round) return <div className="card"><b>아직 중간 평가가 없어요</b><p className="muted" style={{ margin: "8px 0 0" }}>매일 09:00·18:00(KST)에 비공개 데이터로 평가합니다. 결과가 공개되면 여기에 본인 점수·등수가 표시됩니다.</p></div>;
+  if (!data.round) {
+    if (data.pending) return <PendingEval status={data.pending} />;
+    return <div className="card"><b>아직 중간 평가가 없어요</b><p className="muted" style={{ margin: "8px 0 0" }}>매일 09:00·18:00(KST)에 비공개 데이터로 평가합니다. 결과가 공개되면 여기에 본인 점수·등수가 표시됩니다.</p></div>;
+  }
   const r = data.round, s = data.standing;
   return <>
+    {data.pending && <div style={{ marginBottom: 10 }}><PendingEval status={data.pending} /></div>}
     <h2 style={{ margin: "4px 0 2px" }}>{r.type === "final" ? "최종 평가" : "중간 평가"} 결과</h2>
     <p className="muted" style={{ margin: "0 0 12px" }}>{fmtAt(r.published_at)} 공개 · 채점 시각 {fmtAt(r.scheduled_at)}</p>
     {s && <div className="card" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 28, flexWrap: "wrap" }}>
