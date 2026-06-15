@@ -1703,18 +1703,30 @@ export function CreateContestView() {
 }
 
 // ===== nickname gate =====
-function NicknameGate({ onDone }: { onDone: (n: string) => void }) {
+function NicknameGate({ onDone }: { onDone: (n: string) => Promise<void> }) {
   const [val, setVal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [serverErr, setServerErr] = useState("");   // uniqueness etc. — only the server knows
   const err = val ? validateNick(val) : "";
+  async function submit() {
+    if (!val || err || busy) return;
+    setBusy(true); setServerErr("");
+    try { await onDone(val.trim()); }               // server checks duplicate/reserved here
+    catch (e: any) { setServerErr(String(e?.message ?? e) || "닉네임을 설정하지 못했습니다."); setBusy(false); }
+  }
   return <>
     <div className="nav"><div className="brand"><div className="mk" /> DMPC</div></div>
     <div className="wrap" style={{ maxWidth: 460, marginTop: 60 }}>
       <h1 style={{ textAlign: "center" }}>닉네임 설정</h1>
       <p className="muted center" style={{ marginBottom: 22, lineHeight: 1.6 }}>대회에서 표시될 닉네임을 정하세요.<br />영문·숫자·밑줄(_) 2~16자 · 밑줄로 시작/끝 불가 · 중복·예약어 불가 · 변경 불가.</p>
       <div className="card">
-        <input placeholder="예: Clean_King_07" value={val} onChange={(e) => setVal(e.target.value)} style={{ width: "100%", background: "#0f1117", color: "var(--fg)", border: "1px solid var(--line)", borderRadius: 9, padding: 12, fontSize: 15 }} />
-        <div style={{ minHeight: 20, margin: "8px 2px", fontSize: 13 }}>{val && (err ? <span style={{ color: "var(--accent2)" }}>✕ {err}</span> : <span style={{ color: "var(--green)" }}>✓ 사용 가능한 닉네임입니다.</span>)}</div>
-        <button className="btn block" disabled={!val || !!err} onClick={() => onDone(val.trim())}>시작하기</button>
+        <input placeholder="예: Clean_King_07" value={val} onChange={(e) => { setVal(e.target.value); setServerErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={{ width: "100%", background: "#0f1117", color: "var(--fg)", border: "1px solid var(--line)", borderRadius: 9, padding: 12, fontSize: 15 }} />
+        <div style={{ minHeight: 20, margin: "8px 2px", fontSize: 13 }}>
+          {serverErr ? <span style={{ color: "var(--accent2)" }}>✕ {serverErr}</span>
+            : val && (err ? <span style={{ color: "var(--accent2)" }}>✕ {err}</span>
+              : <span className="muted">✓ 형식 OK · <b style={{ color: "var(--fg)" }}>시작하기</b>를 누르면 중복 여부를 확인합니다.</span>)}
+        </div>
+        <button className="btn block" disabled={!val || !!err || busy} onClick={submit}>{busy ? "확인 중…" : "시작하기"}</button>
       </div>
     </div>
   </>;
@@ -1769,7 +1781,7 @@ export function Shell({ children }: { children: ReactNode }) {
     if (authState === "login") return <LoginGate url={loginUrl()} />;
     if (authState === "nickname") return <NicknameGate onDone={setNick} />;
   } else if (!nick) {
-    return <NicknameGate onDone={(n) => { setNick(n); showToast(`환영합니다, ${n} 님!`); }} />;
+    return <NicknameGate onDone={(n) => { showToast(`환영합니다, ${n} 님!`); return setNick(n); }} />;
   }
   return <>
     <div className="nav">

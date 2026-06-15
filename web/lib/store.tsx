@@ -68,7 +68,7 @@ type Store = {
   isTester: boolean;              // may access tester-only (draft) contests
   loginUrl: () => string;
   nick: string | null;
-  setNick: (n: string) => void;
+  setNick: (n: string) => Promise<void>;
   contests: Contest[];
   addContest: (c: Contest) => void;
   notifs: Notif[];
@@ -204,14 +204,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (apiMode) markNotificationsRead().catch(() => {});   // persist read server-side
   }
 
-  function setNick(n: string) {
+  function setNick(n: string): Promise<void> {
     if (apiMode) {
-      apiSetNickname(n)
-        .then(() => { setNickState(n); setAuthState("ready"); })
-        .catch((e) => showToast("닉네임을 설정하지 못했습니다", String(e?.message ?? e)));
-      return;
+      // resolve on success; REJECT on failure so the nickname screen shows the reason
+      // (notably a duplicate -> 409 "이미 사용 중인 닉네임입니다"). Client validation can't
+      // know uniqueness, so the server is the source of truth — don't claim "available" early.
+      return apiSetNickname(n).then(() => { setNickState(n); setAuthState("ready"); });
     }
-    try { localStorage.setItem(NICK_KEY, n); } catch {} setNickState(n);
+    try { localStorage.setItem(NICK_KEY, n); } catch {}
+    setNickState(n);
+    return Promise.resolve();
   }
 
   function addContest(c: Contest) {
