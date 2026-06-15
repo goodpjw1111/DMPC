@@ -124,7 +124,9 @@ export type ProblemExample = { example_input: string | null; example_output: str
 export const getProblemExample = (pid: string) => apiGet<ProblemExample>(`/api/problems/${pid}/example`);
 // Step Up "만점 기준 비용" per mission: { seed(string): optimal cost | null }. Lazy + cached server-side.
 export type RefCosts = { ref_costs: Record<string, number | null> };
-export const getProblemRefCosts = (pid: string) => apiGet<RefCosts>(`/api/problems/${pid}/ref-costs`);
+// Lazy: pass a seed to compute/return just that mission's cost (heavy solve — avoid all-at-once).
+export const getProblemRefCosts = (pid: string, seed?: number) =>
+  apiGet<RefCosts>(`/api/problems/${pid}/ref-costs${seed != null ? `?seed=${seed}` : ""}`);
 export const getStandings = (cid: string) => apiGet<StandingRow[]>(`/api/contests/${cid}/standings`);
 export const getMyEval = (cid: string) => apiGet<MyEval>(`/api/contests/${cid}/my-eval`);
 export const missionInputUrl = (pid: string, seed: number) => `${API_BASE}/api/problems/${pid}/missions/${seed}/input`;

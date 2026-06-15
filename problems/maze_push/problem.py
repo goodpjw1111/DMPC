@@ -25,6 +25,7 @@ from __future__ import annotations
 import heapq
 import itertools
 import random
+import time
 from collections import deque
 
 WALL, BLOCK, DAO, BAZZI, GOAL, EMPTY = "#", "O", "D", "Z", "G", "."
@@ -42,6 +43,10 @@ MEM_STATE_CAP = 170_000           # RAM guard: a dense/large board can grow the 
                                   # 512MB host before the expansion cap bites. Bail past this many
                                   # tracked states (-> witness fallback) — ~95MB peak, still big
                                   # enough for sane Step-Up boards to solve exactly.
+SOLVE_DEADLINE_S = 2.5            # wall-clock guard for the reference/example solve: it runs INSIDE
+                                  # a web request on a single-core free host, so a multi-second solve
+                                  # freezes the API (GIL). Bail past this (-> witness fallback) so the
+                                  # page stays responsive; small boards finish well under it (exact).
 
 
 # --- parse / serialize ------------------------------------------------------
@@ -151,9 +156,10 @@ def check(input_text: str, output_text: str) -> tuple[float | None, bool, str]:
 
 # --- solver: optimal cost + move string (Step Up reference / example / gen check) ---
 
-def _solve(inst: Instance, node_cap: int):
-    """Dijkstra over (dao, bazzi, blocks, turn). Returns (cost, moves) for the minimum
-    total cost to put Dao on the goal, or None if not found within node_cap."""
+def _solve(inst: Instance, node_cap: int, deadline_s: float | None = None):
+    """Dijkstra over (dao, bazzi, blocks, turn). Returns (cost, moves) for the minimum total
+    cost to put Dao on the goal, or None if not found within node_cap / MEM_STATE_CAP states /
+    deadline_s wall-clock seconds (None = no time limit; generation/tests call it that way)."""
     if inst.dao == inst.goal:
         return 0, ""
     start = (inst.dao, inst.bazzi, frozenset(inst.blocks), 0)
@@ -161,6 +167,7 @@ def _solve(inst: Instance, node_cap: int):
     cnt = itertools.count()
     pq = [(0, next(cnt), start, "")]
     expanded = 0
+    t_end = (time.monotonic() + deadline_s) if deadline_s else None
     while pq:
         cost, _, st, path = heapq.heappop(pq)
         if st[0] == inst.goal:
@@ -170,6 +177,8 @@ def _solve(inst: Instance, node_cap: int):
         expanded += 1
         if expanded > node_cap or len(best) > MEM_STATE_CAP:   # give up (RAM/time) -> witness fallback
             return None
+        if t_end is not None and (expanded & 0x7FF) == 0 and time.monotonic() > t_end:
+            return None                                         # wall-clock deadline -> witness fallback
         dao, bazzi, blocks, turn = st
         dao_turn = inst.P == 1 or turn == 0
         mover = dao if dao_turn else bazzi
@@ -201,7 +210,7 @@ def reference_cost(input_text: str) -> float:
     if cached is not None:
         return cached
     inst = parse(input_text)
-    res = _solve(inst, REF_NODE_CAP)
+    res = _solve(inst, REF_NODE_CAP, deadline_s=SOLVE_DEADLINE_S)
     if res:
         out = float(res[0])
     else:
@@ -220,7 +229,7 @@ def reference_cost(input_text: str) -> float:
 def sample_solution(input_text: str) -> str:
     """An (optimal when solvable, else achievable) move string — the statement's example output."""
     inst = parse(input_text)
-    res = _solve(inst, REF_NODE_CAP)
+    res = _solve(inst, REF_NODE_CAP, deadline_s=SOLVE_DEADLINE_S)
     if res:
         return res[1]
     return corridor_witness(inst) or ""

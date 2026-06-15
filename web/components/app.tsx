@@ -1029,8 +1029,10 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   const [myEval, setMyEval] = useState<MyEval | null>(null);
   const [evalErr, setEvalErr] = useState("");
   const [evalHealth, setEvalHealth] = useState<EvalHealth | null>(null);   // admin: 자동 채점 작동 상태
-  // Step Up "만점 기준 비용" per mission seed (optimal solve, lazy + cached server-side). null = 미계산.
-  const [refCosts, setRefCosts] = useState<Record<string, number | null> | null>(null);
+  // Step Up "만점 기준 비용" per mission seed — fetched ONE seed at a time as the user views it
+  // (the optimal solve is heavy; all-at-once froze the API). Accumulates; refReq dedupes fetches.
+  const [refCosts, setRefCosts] = useState<Record<string, number | null>>({});
+  const refReq = useRef<Set<number>>(new Set());
 
   // load the problem (and, for stepup, its mission inputs so the simulator works).
   useEffect(() => {
@@ -1094,14 +1096,22 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightTab, pid]);
 
-  // Step Up: fetch the per-mission "만점 기준 비용" once the problem id is known. The optimal
-  // solve is expensive, so it's lazy + cached server-side; a failure just leaves it unshown.
+  // reset the per-seed ref-cost cache when the problem changes.
+  useEffect(() => { refReq.current = new Set(); setRefCosts({}); }, [pid]);
+
+  // Step Up: fetch the "만점 기준 비용" for the mission CURRENTLY in view (one seed), on demand.
+  // The optimal solve is expensive, so we never fetch all seeds up front; refReq dedupes.
   useEffect(() => {
-    if (!pid || !isStep) return;
+    const s = missions[mission]?.seed;
+    if (!pid || !isStep || s == null || refReq.current.has(s)) return;
+    refReq.current.add(s);
     let on = true;
-    getProblemRefCosts(pid).then((d) => on && setRefCosts(d.ref_costs)).catch(() => {});
+    getProblemRefCosts(pid, s)
+      .then((d) => { if (on) setRefCosts((prev) => ({ ...prev, ...d.ref_costs })); })
+      .catch(() => { refReq.current.delete(s); });   // allow a retry on failure
     return () => { on = false; };
-  }, [pid, isStep]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pid, isStep, mission, missions]);
 
   async function submitStep() {
     if (!pid || busyRef.current) return;          // busyRef blocks a 2nd click before re-render
@@ -1156,8 +1166,9 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   const rightTabs: [RightTab, string][] = isStep ? [["submit", "제출"], ["history", "제출 내역"]] : [["submit", "제출"], ["history", "제출 내역"], ["eval", "중간 평가"]];
   const curSeed = missions[mission]?.seed;
   const curBudget = missions[mission]?.budget ?? 0;
-  // "만점 기준 비용": cost at/below which this case earns full marks. undefined = 아직 미계산.
-  const curRef = (curSeed != null && refCosts) ? refCosts[String(curSeed)] : undefined;
+  // "만점 기준 비용": cost at/below which this case earns full marks. Fetched lazily per seed.
+  const refFetched = curSeed != null && String(curSeed) in refCosts;
+  const curRef = refFetched ? refCosts[String(curSeed)] : undefined;
 
   return <div className="solve">
     <div className="pane left">
@@ -1194,7 +1205,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
             <div className="row" style={{ gap: 14, fontSize: 12, flexWrap: "wrap" }}>
               <span className="muted">배점(만점) <b style={{ color: "var(--fg)" }}>{fmt(curBudget)}</b></span>
               <span className="muted">만점 기준 비용 {curRef == null
-                ? <b style={{ color: "var(--muted)" }}>{refCosts ? "—" : "계산 중…"}</b>
+                ? <b style={{ color: "var(--muted)" }}>{refFetched ? "—" : "계산 중…"}</b>
                 : <>≤ <b style={{ color: "var(--fg)" }}>{fmt(curRef)}</b></>}</span>
             </div>
             <div className="row" style={{ gap: 10 }}>

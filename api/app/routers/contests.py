@@ -268,31 +268,36 @@ async def problem_example(pid: str, user: CurrentUser = Depends(get_current_user
 
 
 # Per-mission optimal cost for Step Up — the "만점 기준 비용" (cost at/below which a case earns
-# full marks). The optimal solve is expensive, so compute once and cache per problem id, just
-# like the example I/O above. Served outside problem_detail so the statement stays instant.
-_REFCOST_CACHE: dict[str, dict[str, float | None]] = {}
+# full marks). The optimal solve is expensive (seconds + RAM), so it is computed LAZILY ONE SEED
+# AT A TIME (?seed=) and cached per seed. Doing all seeds in one request froze the single-core
+# free host (GIL) and risked OOM; the frontend now fetches only the mission being viewed.
+_REFCOST_CACHE: dict[str, dict[str, float | None]] = {}   # pid -> {seed_str: cost|None}
 
 
 @router.get("/problems/{pid}/ref-costs")
-async def problem_ref_costs(pid: str, user: CurrentUser = Depends(get_current_user)):
+async def problem_ref_costs(pid: str, seed: int | None = None,
+                            user: CurrentUser = Depends(get_current_user)):
     p = await _released_problem(pid, allow_unreleased=user.is_tester)
     if p["kind"] != "stepup":
         return {"ref_costs": {}}
-    cached = _REFCOST_CACHE.get(pid)
-    if cached is None:
-        mod = load_problem(p["problem_key"])
-        meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
-        cached = {}
-        for s in (meta.get("given_seeds") or []):
+    mod = load_problem(p["problem_key"])
+    meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
+    seeds = meta.get("given_seeds") or []
+    targets = [seed] if (seed is not None and seed in seeds) else seeds   # one mission, or all (fallback)
+    if len(_REFCOST_CACHE) > 512:
+        _REFCOST_CACHE.clear()
+    cache = _REFCOST_CACHE.setdefault(pid, {})
+    out: dict[str, float | None] = {}
+    for s in targets:
+        key = str(s)
+        if key not in cache:
             try:
                 cost = mod.reference_cost(mod.generate(s, mission_params(meta, s)))
-                cached[str(s)] = (None if cost is None else float(cost))
+                cache[key] = (None if cost is None else float(cost))
             except Exception:               # noqa: BLE001 — best-effort; a failed solve omits that case
-                cached[str(s)] = None
-        if len(_REFCOST_CACHE) > 512:
-            _REFCOST_CACHE.clear()
-        _REFCOST_CACHE[pid] = cached
-    return {"ref_costs": cached}
+                cache[key] = None
+        out[key] = cache[key]
+    return {"ref_costs": out}
 
 
 @router.get("/problems/{pid}/missions/{seed}/input")
