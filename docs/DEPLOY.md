@@ -382,11 +382,28 @@ API_PROXY_TARGET = https://dmpc-api.onrender.com     # next.config가 /api,/auth
 ### 12-6. GitHub Actions (그레이더·평가)
 레포 **Settings ▸ Secrets and variables ▸ Actions**:
 - **Secrets**: `DATABASE_URL`(Neon, Render와 동일), `EVAL_SEED_SECRET`(Render와 **반드시 동일**).
+  - ⚠️ 이 둘이 없으면 `evals`/`grade-samples`가 **조용히 스킵**(잡은 초록색이지만 채점 안 함). `EVAL_SEED_SECRET`이
+    Render와 다르면 챌린지 라운드가 전부 `failed`. → 관리자 화면의 **채점기 상태**(아래)에서 바로 확인 가능.
 - **Variables**: `API_HEALTH_URL = https://<your-app>.vercel.app/healthz`.
 - **Actions** 탭에서 워크플로 활성화(공개 레포 첫 진입 시 “I understand…” 클릭). 이제:
   - `grade-samples` (~10분마다): 챌린지 제출의 **샘플 비용** 채점(즉시 원하면 *Run workflow*).
   - `evals` (09·18 KST + 15분마다): 대회 status 전이 + **중간/최종 평가**(상대 등수 산정).
   - `keepalive` (~10분마다): Render 무료 인스턴스 슬립 방지.
+
+#### 자동 채점 — 평소엔 **아무 조작도 필요 없음**
+- **9·18시 채점은 자동**입니다. `evals`가 cron(09·18 KST)으로, 못 돌면 **15분마다** 캐치업으로 라운드를 만들고
+  채점합니다(라운드는 as-of 컷오프라 늦게 돌아도 결과 동일). **GitHub Actions에 들어가 수동 실행할 필요 없음.**
+- **“지금 평가 실행” 버튼**은 *테스트용 즉시 채점*입니다. 두 가지 동작:
+  - Render에 **`GITHUB_DISPATCH_TOKEN`**(+`GITHUB_REPO=owner/name`)을 설정하면 → 버튼이 `evals`를 **즉시 트리거**
+    (Actions 페이지 방문 불필요). 토큰은 **fine-grained PAT(이 레포만, Contents: Read and write + Metadata: Read)** 또는 classic `repo`.
+  - 토큰이 없으면 → 라운드만 만들어지고 **최대 15분 내 cron이 자동 채점**. (둘 다 Actions를 수동 방문할 필요 없음.)
+- **채점기 상태 확인**: 관리자로 문제 페이지 → **중간 평가 탭**에 “✅ 자동 채점 정상 작동 중 · 마지막 점검 N분 전 ·
+  그레이더 Secret 설정됨/누락 · 즉시 채점 토큰 설정됨/미설정”이 표시됩니다(`GET /api/admin/eval-health`,
+  스케줄러가 매 틱 남기는 heartbeat 기반 — DB 마이그레이션 불필요, 테이블 자동 생성). 여기서 한눈에 “돌고 있나?”를 확인.
+
+> ⚠️ **GitHub 60일 규칙**: 레포에 **60일간 커밋이 없으면 스케줄(cron) 워크플로가 자동 비활성화**됩니다(런만으로는 안 됨).
+> 대회를 장기간 켜둔다면 ~59일마다 커밋하거나 *Actions ▸ 워크플로 ▸ Enable*로 재활성화하세요. 위 “채점기 상태”의
+> “마지막 점검이 오래됨” 경고로 감지됩니다.
 
 ### 12-7. 끝 — 로그인 & 운영
 `https://<your-app>.vercel.app` 접속 → **구글 로그인**(운영자 gmail) → 도메인 예외+부트스트랩으로

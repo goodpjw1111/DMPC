@@ -24,8 +24,9 @@ import {
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
   getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest, deleteContest,
+  getEvalHealth,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
-  type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
+  type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration, type EvalHealth,
 } from "@/lib/api";
 
 // ===== small bits =====
@@ -897,8 +898,13 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
   }
   async function endNow() {
     if (typeof window !== "undefined" && !window.confirm("대회를 지금 종료할까요? 최종 평가를 채점하고 랭킹·리플레이를 공개합니다.")) return;
-    try { await endContest(c.id); showToast("대회를 종료했습니다", "최종 평가 채점 후(evals 실행/자동) 랭킹·리플레이가 열립니다"); const d = await getContestDetail(c.id); setDetail(d); }
-    catch (e: any) { showToast("종료 실패", String(e?.message ?? e)); }
+    try {
+      const r = await endContest(c.id);
+      const tail = r.dispatch === "sent" ? "지금 최종 채점이 트리거됐어요 — 곧 랭킹·리플레이가 열립니다."
+        : "최종 평가는 최대 15분 내 자동 채점 후 랭킹·리플레이가 열립니다(토큰 설정 시 즉시).";
+      showToast("대회를 종료했습니다", tail);
+      const d = await getContestDetail(c.id); setDetail(d);
+    } catch (e: any) { showToast("종료 실패", String(e?.message ?? e)); }
   }
   async function publishNow() {
     if (typeof window !== "undefined" && !window.confirm("이 초안을 공개(live)로 전환할까요? 이후 모든 참가자에게 보입니다.")) return;
@@ -1022,6 +1028,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   const [chHist, setChHist] = useState<ChallengeSubmission[] | null>(null);
   const [myEval, setMyEval] = useState<MyEval | null>(null);
   const [evalErr, setEvalErr] = useState("");
+  const [evalHealth, setEvalHealth] = useState<EvalHealth | null>(null);   // admin: 자동 채점 작동 상태
   // Step Up "만점 기준 비용" per mission seed (optimal solve, lazy + cached server-side). null = 미계산.
   const [refCosts, setRefCosts] = useState<Record<string, number | null> | null>(null);
 
@@ -1064,7 +1071,10 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   function reloadProblem() { if (pid) getProblem(pid).then(setProblem).catch(() => {}); }
   function loadStepHist() { if (pid) getStepupSubmissions(pid).then(setStepHist).catch(() => setStepHist([])); }
   function loadChHist() { if (pid) getChallengeSubmissions(pid).then(setChHist).catch(() => setChHist([])); }
-  function loadEval() { setEvalErr(""); getMyEval(c.id).then(setMyEval).catch((e) => setEvalErr(String(e?.message ?? e))); }
+  function loadEval() {
+    setEvalErr(""); getMyEval(c.id).then(setMyEval).catch((e) => setEvalErr(String(e?.message ?? e)));
+    if (isAdmin) getEvalHealth().then(setEvalHealth).catch(() => {});
+  }
 
   // lazily load the history/eval when its tab is first opened. The `on` flag drops any
   // in-flight response if the tab changes or the view unmounts (no setState-after-unmount).
@@ -1078,6 +1088,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     if (rightTab === "eval") {       // always refetch on open so a just-graded round shows
       setEvalErr("");
       getMyEval(c.id).then((d) => on && setMyEval(d)).catch((e) => on && setEvalErr(String(e?.message ?? e)));
+      if (isAdmin) getEvalHealth().then((d) => on && setEvalHealth(d)).catch(() => {});
     }
     return () => { on = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1121,7 +1132,13 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
     busyRef.current = true; setBusy(true);
     try {
       const r = await evaluateNow(c.id);
-      showToast("평가 라운드 생성됨", `GitHub Actions의 evals 워크플로를 실행하면 채점됩니다(또는 ~15분 내 자동). round #${r.round_id.slice(0, 8)}`);
+      const msg = r.dispatch === "sent"
+        ? "지금 채점이 트리거됐어요 — 잠시 후 ↻ 새로고침하면 결과가 보입니다."
+        : r.dispatch === "unconfigured"
+          ? "토큰 미설정 — 최대 15분 내 자동 채점됩니다(즉시 채점하려면 GITHUB_DISPATCH_TOKEN 설정)."
+          : "즉시 트리거 실패 — 최대 15분 내 자동 채점됩니다.";
+      showToast("평가 라운드 생성됨", `${msg} round #${r.round_id.slice(0, 8)}`);
+      if (isAdmin) getEvalHealth().then(setEvalHealth).catch(() => {});
     } catch (e: any) { showToast("평가 생성 실패", String(e?.message ?? e)); }
     finally { busyRef.current = false; setBusy(false); }
   }
@@ -1236,6 +1253,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
               <span className="muted" style={{ fontSize: 12 }}>관리자: <b>지금 평가 라운드</b>를 만들어 즉시 채점(테스트). 실제 채점은 GitHub Actions <b>evals</b>가 수행 → 끝나면 ↻ 새로고침.</span>
               <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, whiteSpace: "nowrap" }} disabled={busy} onClick={runEvalNow}>지금 평가 실행</button>
             </div>
+            <EvalHealthLine health={evalHealth} />
           </div>}
           <ApiEval data={myEval} err={evalErr} />
         </>}
@@ -1283,6 +1301,44 @@ function ApiChHistory({ hist }: { hist: ChallengeSubmission[] | null }) {
 const VERDICT_KO: Record<string, string> = {
   ok: "정상", tle: "시간 초과", mle: "메모리 초과", re: "런타임 오류", compile_error: "컴파일 오류", illegal: "무효", internal: "내부 오류",
 };
+// Admin-only "is automated grading alive?" line, fed by GET /api/admin/eval-health (the
+// scheduler heartbeat). Answers the operator's question without opening GitHub Actions.
+function EvalHealthLine({ health }: { health: EvalHealth | null }) {
+  if (!health) return <p className="muted" style={{ margin: "8px 0 0", fontSize: 11 }}>채점기 상태 확인 중…</p>;
+  const { last_tick_at, age_seconds, grader_alive, secret_present, dispatch_configured, overdue_rounds, graded_last_tick } = health;
+  const tokenLine = <div className="muted">즉시 채점 토큰: {dispatch_configured ? "설정됨 ✓ (버튼 = 즉시 채점)" : "미설정 (버튼 → 최대 15분 내 자동)"}</div>;
+  const box = { marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)", fontSize: 11, lineHeight: 1.7 } as const;
+
+  // No heartbeat = the scheduler (Actions evals) has never successfully run. The API can't see
+  // GitHub secrets, so show an actionable CHECKLIST rather than guess the cause.
+  if (last_tick_at == null) {
+    return <div style={box}>
+      <div className="bad" style={{ fontWeight: 700 }}>⚠️ 채점기 신호 없음 — 아직 한 번도 채점 점검이 기록되지 않았어요</div>
+      <div className="muted" style={{ marginTop: 4 }}>확인하세요:</div>
+      <div className="muted">① GitHub <b>Actions Secrets</b>에 <b>DATABASE_URL</b>·<b>EVAL_SEED_SECRET</b> 설정(없으면 워크플로가 조용히 스킵).</div>
+      <div className="muted">② <b>Actions ▸ evals</b> 워크플로 활성화(공개 레포 첫 진입 시 “I understand…”, 60일 미커밋 시 자동 비활성).</div>
+      <div className="muted">③ 설정 직후라면 다음 cron(최대 15분) 또는 <b>지금 평가 실행</b>으로 한 번 깨운 뒤 ↻ 새로고침.</div>
+      {tokenLine}
+    </div>;
+  }
+
+  const ageTxt = age_seconds == null ? "방금"
+    : age_seconds < 90 ? "방금" : age_seconds < 3600 ? `${Math.round(age_seconds / 60)}분 전`
+      : `${Math.round(age_seconds / 3600)}시간 전`;
+  const ok = grader_alive && secret_present === true && overdue_rounds === 0;
+  return <div style={box}>
+    <div className={ok ? "ok" : "bad"} style={{ fontWeight: 700 }}>
+      {ok ? "✅ 자동 채점 정상 작동 중" : "⚠️ 자동 채점 점검 필요"}
+      <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>마지막 점검 {ageTxt}</span>
+    </div>
+    {secret_present === true && <div className="muted">그레이더 Secret: 설정됨 ✓</div>}
+    {tokenLine}
+    {overdue_rounds > 0 && <div className="bad">지연된 라운드 {overdue_rounds}개 — 채점이 완료되지 않고 있어요(EVAL_SEED_SECRET 불일치/isolate 셋업 실패 의심 → Actions 로그 확인).</div>}
+    {!grader_alive && <div className="bad">최근 점검이 오래됐어요 — evals 워크플로가 비활성화됐을 수 있어요(60일 미커밋 시 자동 비활성 → Actions에서 재활성).</div>}
+    {graded_last_tick != null && graded_last_tick > 0 && <div className="muted">최근 점검에서 {graded_last_tick}개 라운드 채점됨.</div>}
+  </div>;
+}
+
 // A round exists but isn't a published result yet. Grading runs asynchronously on the
 // GitHub Actions `evals` workflow, so after "지금 평가 실행" the round sits here until that
 // workflow finishes (auto-dispatch, ~15분 주기 cron, 또는 수동 실행) — then ↻ 새로고침.

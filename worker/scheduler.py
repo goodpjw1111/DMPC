@@ -22,6 +22,7 @@ Run:  DATABASE_URL=... EVAL_SEED_SECRET=... python worker/scheduler.py   (loop)
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,25 @@ UPDATE evaluation_rounds
    AND claimed_at IS NOT NULL
    AND claimed_at < now() - ($1 || ' seconds')::interval
 RETURNING id;
+"""
+
+# A single-row HEARTBEAT so the API (and the admin UI) can SEE that grading is actually
+# running — every tick stamps now() + a small summary (incl. whether EVAL_SEED_SECRET is
+# present, which only this in-Actions process can know). Self-provisioned (CREATE IF NOT
+# EXISTS) so no manual schema migration is needed on the live DB. Single-writer by design:
+# the evals workflow uses concurrency:{group:evals} so ticks never overlap; the upsert is
+# last-write-wins (a status row), which self-corrects on the next tick anyway.
+HEARTBEAT_DDL = """
+CREATE TABLE IF NOT EXISTS scheduler_heartbeat (
+    id           boolean PRIMARY KEY DEFAULT TRUE CHECK (id),
+    last_tick_at timestamptz NOT NULL,
+    detail       jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+"""
+HEARTBEAT_UPSERT = """
+INSERT INTO scheduler_heartbeat (id, last_tick_at, detail)
+VALUES (TRUE, now(), $1::jsonb)
+ON CONFLICT (id) DO UPDATE SET last_tick_at = now(), detail = EXCLUDED.detail;
 """
 
 
@@ -83,18 +103,35 @@ async def tick(conn) -> None:
             ORDER BY scheduled_at""",
         now, MAX_ROUND_ATTEMPTS,
     )
+    graded = 0
     for r in due:
         rid = str(r["id"])
         try:
             outcome = await evaluate_round(conn, rid, secret=EVAL_SEED_SECRET)
+            graded += 1
             print(f"[sched] round {rid}: {outcome}")
         except Exception as e:  # noqa: BLE001  — one bad round must not kill the tick
             print(f"[sched] round {rid} errored: {e}")
 
+    # 5. stamp the heartbeat so the API can show "grading is alive" without GitHub Actions.
+    # secret_present lets the admin UI catch a missing EVAL_SEED_SECRET (the #1 silent failure).
+    try:
+        await conn.execute(HEARTBEAT_UPSERT, json.dumps({
+            "secret_present": bool(EVAL_SEED_SECRET),
+            "due": len(due), "graded": graded,
+            "contests": len(contests), "recovered": len(recovered),
+        }))
+    except Exception as e:  # noqa: BLE001 — a heartbeat failure must not fail the tick
+        print(f"[sched] heartbeat write failed: {e}")
+
 
 async def main() -> None:
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=4)
+    async with pool.acquire() as conn:           # self-provision the heartbeat table (idempotent)
+        await conn.execute(HEARTBEAT_DDL)
     once = os.environ.get("DMPC_SCHED_ONCE") == "1"
+    if not EVAL_SEED_SECRET:                      # loud boot warning — Challenge rounds can't grade
+        print("[sched] WARNING: EVAL_SEED_SECRET is empty — Challenge rounds will fail to grade")
     print(f"[sched] start (interval {SCHED_INTERVAL_S:.0f}s, lease {ROUND_LEASE_S:.0f}s, "
           f"once={once})")
     while True:

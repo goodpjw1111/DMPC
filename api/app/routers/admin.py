@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import ci_dispatch, db, grading
+from ..config import get_settings
 from ..deps import CurrentUser, require_admin
 from ..schedule import KST, contest_window
 
@@ -320,8 +321,54 @@ async def evaluate_now(cid: str, user: CurrentUser = Depends(require_admin)):
            VALUES ($1, 'interim', $2, $3, 'pending') RETURNING id""",
         cid, f"manual:{now.isoformat()}", now,
     )
-    await ci_dispatch.fire("evals")          # run the grader NOW (no-op unless configured)
-    return {"round_id": str(row["id"]), "scheduled_at": now.isoformat()}
+    # run the grader NOW if the dispatch token is configured; otherwise the round just waits
+    # for the cron. Report which happened so the UI can tell the admin (no silent no-op).
+    dispatch = await ci_dispatch.fire("evals")
+    return {"round_id": str(row["id"]), "scheduled_at": now.isoformat(), "dispatch": dispatch}
+
+
+@router.get("/eval-health")
+async def eval_health(user: CurrentUser = Depends(require_admin)):
+    """Is automated grading actually running? One glance answers it — no GitHub Actions visit.
+    Surfaces the scheduler HEARTBEAT (written every tick by the `evals` workflow), whether the
+    grader's secret is present (the scheduler runs INSIDE Actions, so it can report this), the
+    instant-grade dispatch token status, and any overdue rounds. No schema migration: the
+    heartbeat table is self-created by the scheduler; if it's absent we report 'no heartbeat'."""
+    s = get_settings()
+    try:
+        hb = await db.fetchrow("SELECT last_tick_at, detail FROM scheduler_heartbeat WHERE id = TRUE")
+    except Exception:                       # noqa: BLE001 — table not created yet (scheduler never ran)
+        hb = None
+    last_tick = hb["last_tick_at"] if hb else None
+    detail = {}
+    if hb and hb["detail"]:
+        raw = hb["detail"]
+        try:
+            detail = raw if isinstance(raw, dict) else json.loads(raw)
+        except (ValueError, TypeError):
+            detail = {}
+    age = (datetime.now(timezone.utc) - last_tick).total_seconds() if last_tick else None
+    overdue = await db.fetchrow(
+        """SELECT count(*) AS n FROM evaluation_rounds
+            WHERE status IN ('pending','failed') AND scheduled_at < now() - interval '30 minutes'""")
+    latest = await db.fetchrow(
+        """SELECT status, type, scheduled_at, published_at FROM evaluation_rounds
+            ORDER BY scheduled_at DESC LIMIT 1""")
+    return {
+        "last_tick_at": last_tick.isoformat() if last_tick else None,
+        "age_seconds": (int(age) if age is not None else None),
+        # cron fires every 15 min; allow slack before calling the grader dead.
+        "grader_alive": (age is not None and age < 1800),
+        "secret_present": detail.get("secret_present"),     # None if unknown (no heartbeat yet)
+        "graded_last_tick": detail.get("graded"),
+        "dispatch_configured": bool(s.github_dispatch_token and s.github_repo),
+        "overdue_rounds": int(overdue["n"]) if overdue else 0,
+        "latest_round": (None if not latest else {
+            "status": latest["status"], "type": latest["type"],
+            "scheduled_at": latest["scheduled_at"].isoformat(),
+            "published_at": latest["published_at"].isoformat() if latest["published_at"] else None,
+        }),
+    }
 
 
 @router.post("/contests/{cid}/end")
@@ -349,8 +396,8 @@ async def end_contest(cid: str, user: CurrentUser = Depends(require_admin)):
                     "INSERT INTO evaluation_rounds (contest_id, type, idem_key, scheduled_at, status) "
                     "VALUES ($1,'final',$2,$3,'pending') RETURNING id", cid, idem, now)
                 rid = row["id"]
-    await ci_dispatch.fire("evals")
-    return {"status": "ended", "final_round_id": str(rid), "ends_at": now.isoformat()}
+    dispatch = await ci_dispatch.fire("evals")   # report whether the final grading was triggered now
+    return {"status": "ended", "final_round_id": str(rid), "ends_at": now.isoformat(), "dispatch": dispatch}
 
 
 @router.post("/contests/{cid}/publish")

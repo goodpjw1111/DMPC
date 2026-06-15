@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://dmpc:dmpc@localhost:5432/dmpc"
 
     # --- CI dispatch (optional): auto-trigger grading workflows on submit/eval ----
-    github_dispatch_token: str = ""    # PAT (fine-grained Contents:write, or classic `repo`); empty = manual only
+    github_dispatch_token: str = ""    # PAT (fine-grained: Contents R/W + Metadata: Read, or classic `repo`); empty = manual only
     github_repo: str = ""              # "owner/name" (set via GITHUB_REPO env)
 
     # --- security headers -------------------------------------------------

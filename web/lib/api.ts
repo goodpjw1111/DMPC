@@ -170,9 +170,21 @@ export type CreateContestPayload = {
 export const createContest = (payload: CreateContestPayload) =>
   apiPost<{ id: string; status: string; starts_at: string; ends_at: string }>("/api/admin/contests", payload);
 export const evaluateNow = (cid: string) =>
-  apiPost<{ round_id: string; scheduled_at: string }>(`/api/admin/contests/${cid}/evaluate-now`);
+  apiPost<{ round_id: string; scheduled_at: string; dispatch: "sent" | "unconfigured" | "error" }>(`/api/admin/contests/${cid}/evaluate-now`);
+// Automated-grading health (admin): is the scheduler (GitHub Actions evals) actually running?
+export type EvalHealth = {
+  last_tick_at: string | null;
+  age_seconds: number | null;
+  grader_alive: boolean;
+  secret_present: boolean | null;   // null = no heartbeat yet (scheduler never ran)
+  graded_last_tick: number | null;
+  dispatch_configured: boolean;
+  overdue_rounds: number;
+  latest_round: { status: string; type: string; scheduled_at: string; published_at: string | null } | null;
+};
+export const getEvalHealth = () => apiGet<EvalHealth>("/api/admin/eval-health");
 export const endContest = (cid: string) =>
-  apiPost<{ status: string; final_round_id: string; ends_at: string }>(`/api/admin/contests/${cid}/end`);
+  apiPost<{ status: string; final_round_id: string; ends_at: string; dispatch: "sent" | "unconfigured" | "error" }>(`/api/admin/contests/${cid}/end`);
 export const publishContest = (cid: string) =>
   apiPost<{ status: string; starts_at: string; ends_at: string }>(`/api/admin/contests/${cid}/publish`);
 export const deleteContest = (cid: string) =>
