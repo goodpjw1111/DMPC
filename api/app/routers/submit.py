@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -24,6 +25,7 @@ MAX_OUTPUT = 2_000_000     # 2 MB cap on a submitted Step Up output
 MAX_SOURCE = 1_000_000     # 1 MB Challenge source-code cap
 MAX_DATA_BIN = 10_000_000  # 10 MB optional data.bin cap (read by the program via file I/O)
 MAX_BODY = MAX_SOURCE + MAX_DATA_BIN + 200_000  # + slack for multipart framing/other fields
+CHALLENGE_COOLDOWN_S = 5    # per-user min seconds between Challenge submits to a problem (anti-flood)
 
 
 _RELEASED = ("live", "ended", "archived")        # contest has started (statement/data public)
@@ -138,6 +140,15 @@ async def challenge_submit(
     if clen and clen.isdigit() and int(clen) > MAX_BODY:
         raise HTTPException(413, "request body exceeds the size limit (source 1MB + data.bin 10MB)")
     p = await _problem_live(pid, "challenge", tester=user.is_tester)
+    # per-user cooldown: each accepted submission enqueues a grader job, so cap the rate a
+    # single user can flood the (free-tier) grader, independent of the per-IP rate limiter.
+    recent = await db.fetchrow(
+        "SELECT created_at FROM submissions WHERE problem_id=$1 AND user_id=$2 "
+        "ORDER BY created_at DESC LIMIT 1", pid, user.id)
+    if recent is not None:
+        age = (datetime.now(timezone.utc) - recent["created_at"]).total_seconds()
+        if age < CHALLENGE_COOLDOWN_S:
+            raise HTTPException(429, f"제출이 너무 빠릅니다. {max(1, int(CHALLENGE_COOLDOWN_S - age) + 1)}초 후 다시 시도하세요.")
     if language_id not in ENABLED_LANGUAGE_IDS:
         # never enqueue an unknown/disabled language: it can't compile/run on the
         # grader image and would burn a worker claim only to error out.

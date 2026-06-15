@@ -6,11 +6,14 @@ A drop-in replacement for sandbox_runner.run_over_seeds so the sample worker and
 round evaluator can exercise the full pipeline (submit -> sample -> eval -> score) on
 hosts where isolate can't run (e.g. GitHub Actions / cgroup-v2 quirks).
 
-⚠️ SECURITY: there is NO sandbox — contestant code runs with the host's CPU/network.
-We DO scrub the child environment (PATH/HOME/LANG only) so the worker's secrets
-(DATABASE_URL, EVAL_SEED_SECRET, ...) are NOT visible to the program, which closes the
-secret-exfiltration vector. But this is still unsafe for untrusted code: use it ONLY
-to beta-test with YOUR OWN submissions on a throwaway runner — NEVER a real contest.
+⚠️ SECURITY: there is NO sandbox — contestant code runs with the host's CPU and FULL
+network, as the SAME OS user as this worker. Scrubbing the child's own environment
+(below) is NOT a security boundary: a same-uid child can still read the PARENT worker's
+secrets via /proc/<ppid>/environ and exfiltrate them over the network. Therefore this
+runner MUST run only in a ZERO-SECRET environment — it refuses to start if a real
+EVAL_SEED_SECRET / non-local DATABASE_URL is present (see _refuse_if_secrets_present).
+Use it ONLY to beta-test YOUR OWN submissions on a throwaway, secret-less runner —
+NEVER a real contest, and NEVER on a host that holds the grader's secrets.
 """
 
 from __future__ import annotations
@@ -24,11 +27,29 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "judge"))
 from challenge_grader import grade_cases  # noqa: E402
 
-# Minimal env handed to the child — deliberately omits the worker's secrets.
+# Minimal env handed to the child. NOTE: this is hygiene, NOT isolation — see the module
+# docstring. The real boundary is _refuse_if_secrets_present() + using isolate in prod.
 _CLEAN_ENV = {"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
 
+
+def _refuse_if_secrets_present() -> None:
+    """Fail CLOSED: the no-sandbox path must never coexist with real secrets, because an
+    unsandboxed same-uid child can read them from /proc/<ppid>/environ. If a grader secret
+    is present we abort loudly instead of silently exposing it to untrusted code."""
+    db_url = os.environ.get("DATABASE_URL", "")
+    has_real_db = bool(db_url) and "localhost" not in db_url and "127.0.0.1" not in db_url
+    if os.environ.get("EVAL_SEED_SECRET") or has_real_db:
+        raise RuntimeError(
+            "DMPC_UNSAFE_NO_SANDBOX is set but real secrets (EVAL_SEED_SECRET / non-local "
+            "DATABASE_URL) are present. The no-sandbox runner must run ONLY in a zero-secret "
+            "environment — an unsandboxed same-uid child can read the parent's "
+            "/proc/<ppid>/environ. Use isolate for any secrets-bearing grader."
+        )
+
+
+_refuse_if_secrets_present()
 print("[local_runner] ⚠️ DMPC_UNSAFE_NO_SANDBOX active — running submissions WITHOUT "
-      "isolate (test only; secrets scrubbed from the child env).", file=sys.stderr)
+      "isolate (test only; NOT a security boundary — see module docstring).", file=sys.stderr)
 
 
 def _subst(argv, src: str, exe: str, mainclass: str) -> list[str]:

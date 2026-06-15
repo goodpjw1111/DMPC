@@ -11,7 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db
 from .config import get_settings
 from .routers import admin, auth, contests, me, registrations, replays, submit
-from .security import CsrfMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from .security import (
+    BodySizeLimitMiddleware, CsrfMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware,
+)
 
 logging.basicConfig(level=logging.INFO)
 settings = get_settings()  # constructing this fails closed on insecure prod config
@@ -29,7 +31,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="DMPC API", lifespan=lifespan)
 
 # Middleware added LAST runs OUTERMOST (first on request). Desired request order:
-#   CORS -> RateLimit -> CSRF -> SecurityHeaders -> route
+#   BodySizeLimit -> CORS -> RateLimit -> CSRF -> SecurityHeaders -> route
 app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 app.add_middleware(CsrfMiddleware, settings=settings)
 app.add_middleware(RateLimitMiddleware, settings=settings)
@@ -40,6 +42,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["content-type", "x-csrf-token"],
 )
+# Outermost: cap the request body before anything reads/spools it (DoS guard).
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.include_router(auth.router)
 app.include_router(me.router)

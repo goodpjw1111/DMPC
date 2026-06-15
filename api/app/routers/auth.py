@@ -115,7 +115,7 @@ async def dev_login(body: DevLoginIn, request: Request,
     """DEV/STAGING ONLY — issue a session for an @{domain} email WITHOUT Google OAuth,
     so the frontend can be tested end-to-end against a real DB. Hard-disabled in prod
     (returns 404), and also refused if Google OAuth IS configured (use real login then)."""
-    if settings.is_prod:
+    if settings.is_prod or settings.google_client_id:   # only a real dev box (no OAuth, not prod) may use it
         raise HTTPException(404, "not found")
     if not dev_email_ok(body.email, settings.allowed_email_domain, settings.allow_email_set):
         raise HTTPException(400, f"email must be a @{settings.allowed_email_domain} address")

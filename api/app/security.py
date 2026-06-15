@@ -14,6 +14,9 @@ from .sessions import csrf_ok
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
+# Global request-body cap (matches submit.py MAX_BODY: 1MB source + 10MB data.bin + slack).
+MAX_REQUEST_BODY = 11_200_000
+
 
 def get_client_ip(request: Request, settings: Settings) -> str:
     """Trusted client IP. Raw X-Forwarded-For is NEVER honored (spoofable); only
@@ -32,6 +35,51 @@ def _origin_of(url: str | None) -> str | None:
     if not p.scheme or not p.netloc:
         return None
     return f"{p.scheme}://{p.netloc}"
+
+
+class BodySizeLimitMiddleware:
+    """Reject oversized request bodies at the ASGI layer, BEFORE Starlette spools a
+    multipart upload to disk/RAM. Counts ACTUAL bytes off the receive stream and 413s as
+    soon as the cap is crossed, so a missing/spoofed Content-Length (chunked upload) can't
+    bypass it the way a header check can. The buffer never exceeds the cap (~11MB), so it is
+    safe to hold; every POST here is small, so full buffering adds no meaningful latency.
+    Pure ASGI (not BaseHTTPMiddleware) so it can short-circuit before the body is consumed."""
+
+    def __init__(self, app, max_body: int = MAX_REQUEST_BODY):
+        self.app = app
+        self.max_body = max_body
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method", "GET") in SAFE_METHODS:
+            await self.app(scope, receive, send)
+            return
+        messages: list[dict] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                messages.append(message)
+                if message["type"] == "http.disconnect":
+                    break
+                continue
+            total += len(message.get("body", b""))
+            if total > self.max_body:
+                await JSONResponse({"error": "request body too large"}, status_code=413)(scope, receive, send)
+                return
+            messages.append(message)
+            if not message.get("more_body", False):
+                break
+        i = 0
+
+        async def replay():
+            nonlocal i
+            if i < len(messages):
+                m = messages[i]
+                i += 1
+                return m
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, replay, send)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

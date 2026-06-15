@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import katex from "katex";
+import DOMPurify from "dompurify";
 import { useStore } from "@/lib/store";
 import { LANGS, LANG_BY_ID, downloadText, fmtBytes, SRC_LIMIT, DATA_LIMIT } from "@/lib/langs";
 import {
@@ -48,7 +49,12 @@ function renderMarkdownWithMath(md: string): string {
     .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => stash(tex, true))     // display math first
     .replace(/\$([^$\n]+?)\$/g, (_m, tex) => stash(tex, false));       // then inline
   const html = marked.parse(protectedMd, { breaks: true, gfm: true }) as string;
-  return html.replace(/@@KMATH(\d+)@@/g, (_m, i) => math[+i] ?? "");
+  // Sanitize the markdown-derived HTML (authored statement_md could contain hostile HTML)
+  // BEFORE swapping in the KaTeX spans — KaTeX output is generated locally and trusted, so
+  // it is injected after sanitizing. On the server (no window) md is empty (client-fetched),
+  // so skipping there is safe; the live render path always sanitizes.
+  const safe = typeof window === "undefined" ? html : DOMPurify.sanitize(html);
+  return safe.replace(/@@KMATH(\d+)@@/g, (_m, i) => math[+i] ?? "");
 }
 function MarkdownView({ md }: { md: string }) {
   const html = useMemo(() => renderMarkdownWithMath(md), [md]);

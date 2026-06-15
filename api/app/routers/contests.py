@@ -183,16 +183,17 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
     }
 
 
-def _example_io(mod, meta: dict) -> tuple[str | None, str | None]:
+def _example_io(mod, meta: dict, kind: str) -> tuple[str | None, str | None]:
     """(example_input, example_output) for the statement body, generated from a
     representative seed (Step Up: its first given mission; otherwise a fixed seed).
-    Output is a reference solution only when the module provides sample_solution().
-    Best-effort: any generator/solver error degrades to (None, None)."""
+    The example OUTPUT is shown ONLY for Step Up (open-output by design). For a Challenge
+    problem we never emit sample_solution() output — that would hand contestants a
+    (near-)optimal solution for a code-submission problem. Best-effort: any error -> None."""
     try:
         seeds = meta.get("given_seeds") or []
         seed = seeds[0] if seeds else 0
         inp = mod.generate(seed, mission_params(meta, seed))
-        out = mod.sample_solution(inp) if hasattr(mod, "sample_solution") else None
+        out = mod.sample_solution(inp) if (kind == "stepup" and hasattr(mod, "sample_solution")) else None
         return inp, out
     except Exception:                       # noqa: BLE001 — examples are non-critical
         return None, None
@@ -208,7 +209,7 @@ async def problem_detail(pid: str, user: CurrentUser = Depends(get_current_user)
         "statement_md": p["statement_md"], "time_limit_ms": p["time_limit_ms"],
         "memory_limit_mb": p["memory_limit_mb"], "simulator_key": p["simulator_key"],
     }
-    base["example_input"], base["example_output"] = _example_io(mod, meta)
+    base["example_input"], base["example_output"] = _example_io(mod, meta, p["kind"])
     if p["kind"] == "stepup":
         seeds = meta.get("given_seeds") or []
         budgets = (mission_budgets(meta) if meta.get("stepup_missions")
