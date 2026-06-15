@@ -17,6 +17,7 @@ import {
   KEY_MOVES, type Inst, type GenParams,
 } from "@/lib/sim";
 import { registerSimulator, getSimulator } from "@/lib/simulators";
+import { parseMaze, replayMaze, MAZE_KEYS, type MazeInst, type MazeState } from "@/lib/maze";
 import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
@@ -311,6 +312,101 @@ function ChallengeSimulator() {
 // META.simulator_key === "clean" renders these. A NEW problem calls registerSimulator
 // with its own key + components; the dispatch site (ApiProblemView) needs no edits.
 registerSimulator("clean", { Step: StepSimulator, Challenge: ChallengeSimulator });
+
+// ===== maze_push simulator (다오와 배찌의 길찾기) =====
+// Renders the grid from the parsed instance + the live state from replayMaze (a JS
+// mirror of the server checker), so cost/reached shown here match how it's scored.
+function MazeBoard({ inst, st }: { inst: MazeInst; st: MazeState }) {
+  const CELL = Math.max(16, Math.floor(360 / Math.max(inst.R, inst.C))), PAD = 6;
+  const GAP = Math.min(3, CELL - 6);
+  const W = inst.C * CELL + PAD * 2, H = inst.R * CELL + PAD * 2;
+  const at = (r: number, c: number) => ({ x: PAD + c * CELL, y: PAD + r * CELL, s: CELL - GAP });
+  const els: JSX.Element[] = [];
+  for (let r = 0; r < inst.R; r++) for (let c = 0; c < inst.C; c++) {
+    const k = r + "," + c, a = at(r, c), wall = inst.walls.has(k);
+    els.push(<rect key={"c" + k} x={a.x} y={a.y} width={a.s} height={a.s} rx={4}
+      fill={wall ? "#3a4256" : "#161a23"} stroke="#222838" />);
+  }
+  const gg = at(inst.goal[0], inst.goal[1]);
+  els.push(<rect key="goal" x={gg.x + 3} y={gg.y + 3} width={gg.s - 6} height={gg.s - 6} rx={4} fill="none" stroke="var(--green)" strokeWidth={2} />);
+  els.push(<circle key="goaldot" cx={gg.x + gg.s / 2} cy={gg.y + gg.s / 2} r={Math.max(2, CELL * 0.1)} fill="var(--green)" />);
+  [...st.blocks].forEach((bk) => { const [r, c] = bk.split(",").map(Number); const a = at(r, c); els.push(<rect key={"b" + bk} x={a.x + 2} y={a.y + 2} width={a.s - 4} height={a.s - 4} rx={3} fill="#8a5a2b" stroke="#6b4420" />); });
+  if (st.bazzi) { const b = at(st.bazzi[0], st.bazzi[1]); els.push(<circle key="bazzi" cx={b.x + b.s / 2} cy={b.y + b.s / 2} r={Math.max(4, CELL * 0.28)} fill="#c9a0ff" />); }
+  const d = at(st.dao[0], st.dao[1]), ins = Math.max(3, Math.round(CELL * 0.24));
+  els.push(<rect key="dao" x={d.x + ins} y={d.y + ins} width={d.s - ins * 2} height={d.s - ins * 2} rx={4} fill="var(--robot)" />);
+  return <svg viewBox={`0 0 ${W} ${H}`} className="sim-grid" style={{ width: "100%", maxHeight: "52vh" }} preserveAspectRatio="xMidYMid meet">{els}</svg>;
+}
+
+function MazeStepSim({ mission, setMission, onOutput, missions, initial }: { mission: number; setMission: (i: number) => void; onOutput: (s: string) => void; missions: Mission[]; initial: string }) {
+  const seed = missions[mission] ?? missions[0];
+  const inst = useMemo(() => parseMaze(seed.input), [seed.input]);
+  const [moves, setMoves] = useState(initial || "");
+  const lastMission = useRef(mission);
+  useEffect(() => { if (lastMission.current === mission) return; lastMission.current = mission; setMoves(""); }, [mission]);
+  useEffect(() => { onOutput(moves); }, [moves, onOutput]);
+  const st = useMemo(() => replayMaze(inst, moves), [inst, moves]);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && ["TEXTAREA", "INPUT", "SELECT"].includes(ae.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" || e.key === "Backspace") { e.preventDefault(); setMoves((m) => m.slice(0, -1)); return; }
+      if (k === "r") { e.preventDefault(); setMoves(""); return; }
+      const mv = MAZE_KEYS[e.key]; if (!mv) return; e.preventDefault();
+      setMoves((m) => (st.reached ? m : m + mv));
+    }
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [st.reached]);
+  return <>
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+      <h2 style={{ margin: 0 }}>시뮬레이터</h2><MissionSelect mission={mission} setMission={setMission} missions={missions} />
+    </div>
+    <p className="muted" style={{ margin: "0 0 10px", fontSize: 12 }}>방향키로 {inst.P === 2 ? "다오/배찌를 번갈아 " : ""}움직여 목표(◎)에 도달하세요. 갈색 블럭은 밀 수 있고, 한 번에 여러 칸을 밀면 비용이 늘어요. <kbd>z</kbd> 한 칸 취소 · <kbd>r</kbd> 리셋</p>
+    <div className="grid2">
+      <div><MazeBoard inst={inst} st={st} /></div>
+      <div>
+        <div className="sim-hud"><div><div className="k">비용</div><div className="v">{st.cost}</div></div><div><div className="k">{st.reached ? "상태" : "다음 차례"}</div><div className="v">{st.reached ? "도달!" : (inst.P === 2 ? (st.daoNext ? "다오" : "배찌") : "다오")}</div></div></div>
+        <div className="io" style={{ marginTop: 8 }}><div><div className="k muted" style={{ fontSize: 11, marginBottom: 4 }}>입력 (주어짐)</div><textarea rows={5} readOnly value={seed.input.trimEnd()} /></div></div>
+        <div className="io"><div><div className="k muted" style={{ fontSize: 11, marginBottom: 4 }}>출력 (이동열 — 그대로 제출됩니다)</div><textarea rows={3} readOnly value={moves} /><div className="muted" style={{ fontSize: 11, marginTop: 4 }}>↳ 오른쪽 <b>제출</b> 칸에 자동 반영됩니다.</div></div></div>
+        <div className="muted" style={{ marginTop: 8 }}>{st.reached ? <span className="ok">✓ 목표 도달 · 비용 {st.cost}</span> : `진행 중 · 비용 ${st.cost}`}</div>
+        {inst.P === 2 && <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>C=2: 출력의 짝수 번째=다오, 홀수 번째=배찌(자동 교대). 배찌(보라)는 블럭을 밀어 다오를 도와줍니다.</p>}
+      </div>
+    </div>
+  </>;
+}
+
+function MazeChallengeSim() {
+  const [input, setInput] = useState("");
+  const [moves, setMoves] = useState("");
+  let inst: MazeInst | null = null;
+  try { inst = input.trim() ? parseMaze(input) : null; } catch { inst = null; }
+  const st = inst ? replayMaze(inst, moves) : null;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && ["TEXTAREA", "INPUT", "SELECT"].includes(ae.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" || e.key === "Backspace") { e.preventDefault(); setMoves((m) => m.slice(0, -1)); return; }
+      const mv = MAZE_KEYS[e.key]; if (!mv) return; e.preventDefault(); setMoves((m) => m + mv);
+    }
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return <>
+    <h2 style={{ margin: "0 0 8px" }}>시뮬레이터 <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>— 입력을 붙여넣고 방향키로 플레이</span></h2>
+    <div className="grid2">
+      <div>{inst && st ? <MazeBoard inst={inst} st={st} />
+        : <div className="sim-grid" style={{ height: 240, display: "flex", alignItems: "center", justifyContent: "center", color: "#5b6273" }}>입력을 붙여넣으면 보드가 표시됩니다</div>}</div>
+      <div>
+        <div className="sim-hud"><div><div className="k">비용</div><div className="v">{st ? st.cost : "-"}</div></div><div><div className="k">상태</div><div className="v">{st ? (st.reached ? "도달!" : "진행") : "-"}</div></div></div>
+        <div className="io" style={{ marginTop: 8 }}><div><div className="k muted" style={{ fontSize: 11, marginBottom: 4 }}>입력 (붙여넣기)</div><textarea rows={6} placeholder="입력 데이터를 붙여넣으면 보드가 표시됩니다" value={input} onChange={(e) => { setInput(e.target.value); setMoves(""); }} /></div></div>
+        <div className="io"><div><div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}><div className="k muted" style={{ fontSize: 11 }}>출력 (방향키로 생성)</div><button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setMoves("")} disabled={!moves}>지우기</button></div><textarea rows={2} readOnly value={moves} /></div></div>
+        <div className="keys">입력란 밖에서 <kbd>↑↓←→</kbd> 이동 · <kbd>z</kbd> 한 칸 취소{inst && inst.P === 2 ? " · C=2 자동 교대(다오/배찌)" : ""}</div>
+      </div>
+    </div>
+  </>;
+}
+
+registerSimulator("maze", { Step: MazeStepSim, Challenge: MazeChallengeSim });
 
 // ===== problem view =====
 type RightTab = "submit" | "history" | "eval";

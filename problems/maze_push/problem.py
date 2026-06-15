@@ -15,8 +15,9 @@ Contract (shared by every problem module):
     sample_solution(input) -> str        an optimal move string (example output / solver)
     META: dict
 
-The browser has no simulator for this problem (META.simulator_key = None) — players
-submit a move string directly; the server is the sole judge.
+The browser simulator (META.simulator_key = "maze") lets players play the board with
+the arrow keys; web/lib/maze.ts mirrors _apply so its cost preview matches scoring.
+The server is always the sole judge.
 """
 
 from __future__ import annotations
@@ -250,7 +251,7 @@ META = {
     "title": "다오와 배찌의 길찾기",
     "time_limit_ms": 2000,
     "memory_limit_mb": 1024,
-    "simulator_key": None,            # no browser simulator yet — submit a move string
+    "simulator_key": "maze",          # web/lib/maze.ts + MazeStepSim/MazeChallengeSim
     "stepup_budget": 1000000,
     "given_seeds": [101, 102, 103],
     "gen_params": DEFAULTS,
