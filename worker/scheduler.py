@@ -127,8 +127,11 @@ async def tick(conn) -> None:
 
 async def main() -> None:
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=4)
-    async with pool.acquire() as conn:           # self-provision the heartbeat table (idempotent)
-        await conn.execute(HEARTBEAT_DDL)
+    try:                                         # self-provision the heartbeat table (idempotent)
+        async with pool.acquire() as conn:       # best-effort: a DDL failure (e.g. no CREATE priv)
+            await conn.execute(HEARTBEAT_DDL)    # must NEVER stop grading — observability is secondary
+    except Exception as e:  # noqa: BLE001
+        print(f"[sched] heartbeat table init failed (grading continues): {e}")
     once = os.environ.get("DMPC_SCHED_ONCE") == "1"
     if not EVAL_SEED_SECRET:                      # loud boot warning — Challenge rounds can't grade
         print("[sched] WARNING: EVAL_SEED_SECRET is empty — Challenge rounds will fail to grade")
