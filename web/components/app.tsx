@@ -1272,6 +1272,38 @@ const CLEAN_FEATURES = [
 ];
 type StepCase = { seed: number; score: number; features: Record<string, number> };
 
+// One-click authoring preset for the maze_push (길찾기) problem so the admin doesn't hand-fill
+// the tables. Step Up = the 10 graded cases below (scores sum to 1,000,000). Challenge = 18
+// subtasks: players {1,2} × obstacle-bands × block-bands, all on the fixed 30×30 board.
+const MAZE_STEPUP_PRESET: StepCase[] = [
+  { seed: 101, score: 50000,  features: { rows: 5,  cols: 5,  players: 1, obstacles: 5,  blocks: 8 } },
+  { seed: 102, score: 50000,  features: { rows: 6,  cols: 6,  players: 2, obstacles: 5,  blocks: 10 } },
+  { seed: 103, score: 50000,  features: { rows: 5,  cols: 5,  players: 1, obstacles: 5,  blocks: 8 } },
+  { seed: 104, score: 50000,  features: { rows: 6,  cols: 6,  players: 2, obstacles: 5,  blocks: 10 } },
+  { seed: 105, score: 100000, features: { rows: 10, cols: 10, players: 1, obstacles: 10, blocks: 30 } },
+  { seed: 106, score: 100000, features: { rows: 10, cols: 10, players: 2, obstacles: 10, blocks: 30 } },
+  { seed: 107, score: 100000, features: { rows: 10, cols: 10, players: 1, obstacles: 20, blocks: 15 } },
+  { seed: 108, score: 100000, features: { rows: 10, cols: 10, players: 2, obstacles: 20, blocks: 15 } },
+  { seed: 109, score: 200000, features: { rows: 15, cols: 15, players: 1, obstacles: 60, blocks: 40 } },
+  { seed: 110, score: 200000, features: { rows: 15, cols: 15, players: 2, obstacles: 60, blocks: 40 } },
+];
+type PresetSub = { name: string; features: Record<string, number[]>; seedLo: number; seedHi: number; budget: number };
+function mazeChallengePreset(): PresetSub[] {
+  const Wbands = [[50, 100], [101, 150], [150, 200]];
+  const Bbands = [[100, 150], [150, 200], [250, 300]];
+  const subs: PresetSub[] = [];
+  for (const c of [1, 2]) for (const [wlo, whi] of Wbands) for (const [blo, bhi] of Bbands) {
+    subs.push({ name: `C=${c} · ${blo}≤B≤${bhi} · ${wlo}≤W≤${whi}`,
+      features: { rows: [30, 30], cols: [30, 30], players: [c, c], obstacles: [wlo, whi], blocks: [blo, bhi] },
+      seedLo: 0, seedHi: 0, budget: 0 });
+  }
+  const n = subs.length;                                   // 18
+  const base = Math.floor(1_000_000 / n), rem = 1_000_000 - base * n;
+  const span = Math.floor(10_000_000 / n);                 // distinct seed ranges within the cap
+  subs.forEach((s, i) => { s.budget = base + (i < rem ? 1 : 0); s.seedLo = i * span; s.seedHi = i * span + span - 1; });
+  return subs;
+}
+
 export function CreateContestView() {
   const { apiMode, isAdmin, addContest, showToast } = useStore();
   const router = useRouter();
@@ -1359,6 +1391,13 @@ export function CreateContestView() {
     if (curTemplate.given_seeds?.length) setSeedsText(curTemplate.given_seeds.join(", "));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiMode, problemKey, curTemplate]);
+  function applyMazePreset() {
+    setGenType("param");
+    setMissions(MAZE_STEPUP_PRESET.map((m) => ({ ...m, features: { ...m.features } })));   // copy so edits don't mutate the const
+    setUseSubtasks(true);
+    setChSubtasks(mazeChallengePreset());
+    showToast("길찾기 프리셋을 적용했습니다", "스텝업 10케이스 + 챌린지 18 서브태스크 · 점수 합 각 100만 (표에서 수정 가능)");
+  }
 
   const rawSeedCount = seedsText.split(/[\s,]+/).filter((t) => t.trim().length).length;
   const seeds = Array.from(new Set(seedsText.split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)));
@@ -1501,6 +1540,10 @@ export function CreateContestView() {
         </select>)}
       {curTemplate && !curTemplate.parametric && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 <b>고정 범위</b>라 아래 격자/먼지 파라미터는 무시됩니다.</p>}
       {curTemplate && !curTemplate.simulator_key && <p className="muted" style={{ margin: "-8px 0 0", fontSize: 12 }}>※ 이 템플릿은 브라우저 시뮬레이터가 없어 제출만 가능합니다(서버가 채점).</p>}
+      {problemKey === "maze_push" && <div style={{ marginTop: 12, padding: 12, border: "1px solid var(--line2)", borderRadius: 10, background: "#0f1117" }}>
+        <button className="btn" style={{ padding: "8px 16px", fontSize: 13 }} onClick={applyMazePreset}>✨ 길찾기 프리셋 자동 채우기</button>
+        <p className="muted" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.6 }}>스텝업 <b>10케이스</b> + 챌린지 <b>18 서브태스크</b>(플레이어 C 1·2 × 장애물 W 3구간 × 블럭 B 3구간, 30×30 고정)를 한 번에 채웁니다. 점수/배점 합은 각 <b>1,000,000</b>. 적용 후 표에서 자유롭게 수정하세요.</p>
+      </div>}
       <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 12, cursor: "pointer", fontSize: 13 }}>
         <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} />
         <span><b>지금 시작 (테스트용)</b> — 일정 규칙을 건너뛰고 <b>즉시 진행(live)</b>으로 만들어 바로 제출·채점을 확인합니다.</span>

@@ -18,6 +18,31 @@ from types import ModuleType
 # run(input_text) -> (stdout, runtime_ms, verdict). verdict: OK|TLE|MLE|RE|CE
 SourceRunner = Callable[[str], tuple[str, int, str]]
 
+# Generation is deterministic in (problem, seed, params) but can be EXPENSIVE (dense 30x30
+# maze boards take seconds). A round grades every contestant over the SAME seeds, so without
+# caching we'd regenerate each instance once per submission. Memoize so each (seed, params)
+# instance is built ONCE per process. Bounded; cleared wholesale past the cap.
+_GEN_CACHE: dict = {}
+_GEN_CACHE_MAX = 512
+
+
+def _freeze(params: dict | None):
+    if not params:
+        return ()
+    return tuple(sorted((k, tuple(v) if isinstance(v, (list, tuple)) else v)
+                        for k, v in params.items()))
+
+
+def generate_cached(problem: ModuleType, seed: int, gen_params: dict | None) -> str:
+    key = (id(problem), seed, _freeze(gen_params))
+    inp = _GEN_CACHE.get(key)
+    if inp is None:
+        inp = problem.generate(seed, gen_params)
+        if len(_GEN_CACHE) >= _GEN_CACHE_MAX:
+            _GEN_CACHE.clear()
+        _GEN_CACHE[key] = inp
+    return inp
+
 
 @dataclass(frozen=True)
 class CaseOutcome:
@@ -30,7 +55,7 @@ class CaseOutcome:
 
 def grade_case(problem: ModuleType, seed: int, run: SourceRunner,
                gen_params: dict | None = None) -> CaseOutcome:
-    inp = problem.generate(seed, gen_params)
+    inp = generate_cached(problem, seed, gen_params)
     stdout, runtime_ms, verdict = run(inp)
     if verdict != "OK":
         return CaseOutcome(seed, None, False, verdict, runtime_ms)
