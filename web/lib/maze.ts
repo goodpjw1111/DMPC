@@ -32,16 +32,17 @@ export function parseMaze(text: string): MazeInst {
   return { R, C, P, walls, blocks0, dao0, bazzi0, goal };
 }
 
-// Apply one move; mirrors problem.py _apply. Returns the new player pos, the (possibly
-// new) block set, and the cost (always >= 1).
+// Apply one move; mirrors problem.py _apply. `other` is the OTHER player's cell key (or null):
+// a block may never overlap a player, so a push whose chain end lands on `other` FAILS.
+// (Players may still share a cell with each other — only block<->player overlap is forbidden.)
 export function applyMazeMove(R: number, C: number, walls: Set<string>, blocks: Set<string>,
-                              pos: Pos, d: Pos): { pos: Pos; blocks: Set<string>; cost: number } {
+                              pos: Pos, d: Pos, other: string | null = null): { pos: Pos; blocks: Set<string>; cost: number } {
   const [dr, dc] = d, nr = pos[0] + dr, nc = pos[1] + dc;
   if (nr < 0 || nr >= R || nc < 0 || nc >= C || walls.has(k(nr, nc))) return { pos, blocks, cost: 1 };
   if (blocks.has(k(nr, nc))) {
     let len = 0, cr = nr, cc = nc;
     while (blocks.has(k(cr, cc))) { len++; cr += dr; cc += dc; }
-    if (cr < 0 || cr >= R || cc < 0 || cc >= C || walls.has(k(cr, cc))) return { pos, blocks, cost: 1 };
+    if (cr < 0 || cr >= R || cc < 0 || cc >= C || walls.has(k(cr, cc)) || k(cr, cc) === other) return { pos, blocks, cost: 1 };
     const nb = new Set(blocks); nb.delete(k(nr, nc)); nb.add(k(cr, cc));
     return { pos: [nr, nc], blocks: nb, cost: 1 + len };
   }
@@ -63,7 +64,8 @@ export function replayMaze(inst: MazeInst, moveStr: string): MazeState {
   let cost = 0;
   for (let i = 0; i < moves.length; i++) {
     const daoTurn = inst.P === 1 || i % 2 === 0;
-    const res = applyMazeMove(inst.R, inst.C, inst.walls, blocks, daoTurn ? dao : (bazzi as Pos), MAZE_DIRS[moves[i]]);
+    const other = daoTurn ? (bazzi ? k(bazzi[0], bazzi[1]) : null) : k(dao[0], dao[1]);
+    const res = applyMazeMove(inst.R, inst.C, inst.walls, blocks, daoTurn ? dao : (bazzi as Pos), MAZE_DIRS[moves[i]], other);
     blocks = res.blocks; cost += res.cost;
     if (daoTurn) {
       dao = res.pos;

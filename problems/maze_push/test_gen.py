@@ -136,6 +136,18 @@ def test_small_boards_require_pushing():
     assert strong >= 6, f"only {strong}/10 medium boards require a push"
 
 
+def test_block_cannot_overlap_player():
+    # a block may NOT be pushed onto the other player (Bazzi) — the push fails, no overlap
+    # board: D(0,0) O(0,1) Z(0,2) .(0,3) G(0,4); Dao 'R' would push the block onto Bazzi
+    cost, valid, _ = P.check("1 5 2\nDOZ.G\n", "R")
+    assert valid and cost == float(P.MISS_COST), (valid, cost)   # blocked push, goal not reached
+    # _apply directly: chain end == other player -> failed move, blocks unchanged, cost 1
+    assert P._apply(1, 5, set(), frozenset({(0, 1)}), (0, 0), (0, 1), (0, 2)) == ((0, 0), frozenset({(0, 1)}), 1)
+    # without an other player the same push succeeds (block advances)
+    npos, nb, c = P._apply(1, 5, set(), frozenset({(0, 1)}), (0, 0), (0, 1), None)
+    assert npos == (0, 1) and (0, 2) in nb and c == 2, (npos, nb, c)
+
+
 def test_block_can_pass_through_goal():
     # a block sitting on the goal must be pushable off it so Dao can enter (goal isn't a wall)
     cost, valid, _ = P.check("1 5 1\nDO.G.\n", "RRR")   # block: (0,1)->(0,2)->goal(0,3)->(0,4); Dao ends on goal

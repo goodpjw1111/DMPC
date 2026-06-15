@@ -90,10 +90,12 @@ def _serialize(R, C, P, walls, blocks, dao, bazzi, goal) -> str:
 
 # --- one move (shared by checker + solver) ----------------------------------
 
-def _apply(R, C, walls, blocks: frozenset, pos, d):
-    """Apply one move of a player at `pos` in direction `d`. Returns
-    (new_pos, new_blocks_or_same, cost). Players are transparent (only walls/edge and
-    blocks interact). A move always costs >= 1 (even a failed one)."""
+def _apply(R, C, walls, blocks: frozenset, pos, d, other=None):
+    """Apply one move of a player at `pos` in direction `d`. `other` is the OTHER player's
+    cell (or None). A BLOCK may never overlap a player, so a push whose chain end would land
+    on `other` FAILS (like hitting a wall). The two PLAYERS may still share a cell — only
+    block<->player overlap is forbidden. Returns (new_pos, new_blocks_or_same, cost); a move
+    always costs >= 1 (even a failed one)."""
     dr, dc = d
     nr, nc = pos[0] + dr, pos[1] + dc
     if not (0 <= nr < R and 0 <= nc < C) or (nr, nc) in walls:
@@ -103,8 +105,8 @@ def _apply(R, C, walls, blocks: frozenset, pos, d):
         while (cr, cc) in blocks:                   # length of the contiguous chain
             k += 1
             cr, cc = cr + dr, cc + dc
-        if not (0 <= cr < R and 0 <= cc < C) or (cr, cc) in walls:
-            return pos, blocks, 1                   # chain ends at wall/edge -> fail, +1
+        if not (0 <= cr < R and 0 <= cc < C) or (cr, cc) in walls or (cr, cc) == other:
+            return pos, blocks, 1                   # chain ends at wall/edge/player -> fail, +1
         nb = set(blocks)
         nb.discard((nr, nc))                        # near block vacates the cell Dao enters
         nb.add((cr, cc))                            # far end advances into the free cell
@@ -130,7 +132,8 @@ def check(input_text: str, output_text: str) -> tuple[float | None, bool, str]:
     for i, m in enumerate(moves):
         dao_turn = inst.P == 1 or i % 2 == 0
         pos = dao if dao_turn else bazzi
-        npos, blocks, c = _apply(inst.R, inst.C, inst.walls, blocks, pos, DIRS[m])
+        other = bazzi if dao_turn else dao          # a block can't be pushed onto the other player
+        npos, blocks, c = _apply(inst.R, inst.C, inst.walls, blocks, pos, DIRS[m], other)
         cost += c
         if dao_turn:
             dao = npos
@@ -165,8 +168,9 @@ def _solve(inst: Instance, node_cap: int):
         dao, bazzi, blocks, turn = st
         dao_turn = inst.P == 1 or turn == 0
         mover = dao if dao_turn else bazzi
+        other = bazzi if dao_turn else dao          # a block can't be pushed onto the other player
         for m, d in DIRS.items():
-            npos, nblocks, c = _apply(inst.R, inst.C, inst.walls, blocks, mover, d)
+            npos, nblocks, c = _apply(inst.R, inst.C, inst.walls, blocks, mover, d, other)
             if dao_turn:
                 nst = (npos, bazzi, nblocks, 0 if inst.P == 1 else 1)
             else:
@@ -339,8 +343,9 @@ META = {
         "### 블럭 밀기 규칙\n"
         "- 이동하려는 칸에 블럭이 있으면 **그 방향으로 이어진 블럭들을 한 칸씩 밉니다.** "
         "이어진 블럭이 `k`개면 이 행동의 비용은 **`1 + k`** 입니다 (예: 블럭 3개를 밀면 `1 + 3 = 4`).\n"
-        "- **이어진 블럭의 끝이 벽/장애물/격자 밖**이면 밀 수 없어 **이동은 실패**하고 제자리에 머뭅니다. "
-        "단, **실패해도 이동 비용 1은 추가**됩니다. (블럭 없이 벽으로 바로 이동해도 실패 + 비용 1.)\n"
+        "- **이어진 블럭의 끝이 벽/장애물/격자 밖이거나 다른 플레이어가 있으면** 밀 수 없어 **이동은 실패**하고 "
+        "제자리에 머뭅니다. 단, **실패해도 이동 비용 1은 추가**됩니다. (블럭 없이 벽으로 바로 이동해도 실패 + 비용 1.)\n"
+        "- **블럭은 어떤 플레이어와도 같은 칸에 있을 수 없습니다** — 다른 플레이어가 있는 칸으로 블럭을 밀 수 없습니다.\n"
         "- 블럭은 **목표 칸(`G`)을 지나갈 수 있습니다** — 목표는 벽이 아니라 블럭 이동을 막지 않습니다. "
         "도달은 **다오가 목표 칸에 설 때** 인정되며, 목표 위에 블럭이 있으면 밀어내고 들어가야 합니다.\n\n"
         "### 출력 / 비용\n"
@@ -351,6 +356,6 @@ META = {
         "`C = 2`이면 배찌(`Z`)가 등장합니다. 배찌는 목표에 도달할 필요는 없고, **블럭을 밀어 다오를 돕는** 역할입니다. "
         "두 플레이어는 **번갈아 가며**(다오 → 배찌 → 다오 → …) 움직이고, 위 규칙이 동일하게 적용됩니다. "
         "출력 문자열의 짝수번째(0,2,4,…) 문자는 **다오**, 홀수번째(1,3,5,…)는 **배찌**의 이동입니다. "
-        "**다오와 배찌는 위치가 겹칠 수 있습니다.**"
+        "**다오와 배찌는 서로 위치가 겹칠 수 있지만, 블럭은 어느 플레이어와도 겹칠 수 없습니다**(플레이어가 있는 칸으로는 블럭을 밀 수 없음)."
     ),
 }
