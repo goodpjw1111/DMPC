@@ -38,7 +38,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "judge"))
 from languages import get as get_language  # noqa: E402
 from registry import load_problem  # noqa: E402
 from sandbox import IsolateInternalError, Limits  # noqa: E402
-from sandbox_runner import run_over_seeds  # noqa: E402
+if os.environ.get("DMPC_UNSAFE_NO_SANDBOX") == "1":      # TEST ONLY: run without isolate
+    from local_runner import run_over_seeds  # noqa: E402
+else:
+    from sandbox_runner import run_over_seeds  # noqa: E402
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 POLL_INTERVAL_S = float(os.environ.get("WORKER_POLL_S", "1.0"))

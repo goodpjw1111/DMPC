@@ -37,7 +37,10 @@ from languages import get as get_language  # noqa: E402
 from registry import load_problem  # noqa: E402
 from round_scoring import CaseRaw, score_round  # noqa: E402
 from sandbox import IsolateInternalError, Limits  # noqa: E402
-from sandbox_runner import run_over_seeds  # noqa: E402
+if os.environ.get("DMPC_UNSAFE_NO_SANDBOX") == "1":      # TEST ONLY: run without isolate
+    from local_runner import run_over_seeds  # noqa: E402
+else:
+    from sandbox_runner import run_over_seeds  # noqa: E402
 
 BOX_ID = int(os.environ.get("ISOLATE_BOX_ID", "0"))
 # Unpredictable-but-reproducible hidden seeds need a server secret (NOT the API
