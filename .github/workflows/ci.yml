@@ -32,7 +32,7 @@ jobs:
             api/tests/test_nickname.py api/tests/test_schedule.py \
             api/tests/test_grading_service.py api/tests/test_round_service.py \
             worker/test_grade_round.py problems/example_clean/test_pipeline.py \
-            problems/clean_robot/test_gen.py; do
+            problems/clean_robot/test_gen.py problems/maze_push/test_gen.py; do
             echo "== $t =="
             python "$t"
           done
