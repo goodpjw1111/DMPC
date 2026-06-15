@@ -77,17 +77,26 @@ def _mulberry32(seed: int):
     return rnd
 
 
+def _pin(p: dict, lokey: str, hikey: str, val) -> None:
+    # a feature value is either EXACT (scalar -> pinned single value, Step Up cases) or a
+    # RANGE [lo, hi] (Challenge subtasks: the seed picks a value within it).
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        p[lokey], p[hikey] = int(val[0]), int(val[1])
+    else:
+        p[lokey] = p[hikey] = int(val)
+
+
 def _merged_params(params: dict | None) -> dict:
     p = dict(DEFAULT_PARAMS)
     if params:
-        # exact per-case features pin a range to a single value (authored Step Up cases):
-        #   {"h": 8, "w": 10, "dust": 5}  ->  hMin=hMax=8, wMin=wMax=10, dMin=dMax=5
+        # per-feature value: scalar (exact) or [lo, hi] (range). h/w/dust map to the
+        # generator's hMin/hMax, wMin/wMax, dMin/dMax.
         if params.get("h") is not None:
-            p["hMin"] = p["hMax"] = int(params["h"])
+            _pin(p, "hMin", "hMax", params["h"])
         if params.get("w") is not None:
-            p["wMin"] = p["wMax"] = int(params["w"])
+            _pin(p, "wMin", "wMax", params["w"])
         if params.get("dust") is not None:
-            p["dMin"] = p["dMax"] = int(params["dust"])
+            _pin(p, "dMin", "dMax", params["dust"])
         for k in DEFAULT_PARAMS:                  # explicit ranges (hMin/hMax/...) still win
             if params.get(k) is not None:
                 p[k] = int(params[k])

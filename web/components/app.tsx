@@ -1141,7 +1141,7 @@ export function CreateContestView() {
   const [startNow, setStartNow] = useState(false);
   const [missions, setMissions] = useState<StepCase[]>([]);   // Step Up: per-case features + scores
   const [useSubtasks, setUseSubtasks] = useState(false);      // Challenge: condition-based subtasks
-  const [chSubtasks, setChSubtasks] = useState<{ name: string; features: Record<string, number>; seedLo: number; seedHi: number; budget: number }[]>([]);
+  const [chSubtasks, setChSubtasks] = useState<{ name: string; features: Record<string, number[]>; seedLo: number; seedHi: number; budget: number }[]>([]);
   const [genLang, setGenLang] = useState("python3");
   const [genCode, setGenCode] = useState(GEN_CODE_DEFAULT);
   const [checkCode, setCheckCode] = useState(CHECK_CODE_DEFAULT);
@@ -1186,7 +1186,7 @@ export function CreateContestView() {
   // seed one default Challenge subtask the first time the toggle is turned on.
   useEffect(() => {
     if (useSubtasks && chSubtasks.length === 0) {
-      const defFeats = Object.fromEntries(featSchema.map((f) => [f.key, f.default]));
+      const defFeats = Object.fromEntries(featSchema.map((f) => [f.key, [f.default, f.default]]));
       setChSubtasks([{ name: "조건 1", features: defFeats, seedLo, seedHi, budget: 1_000_000 }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1207,7 +1207,7 @@ export function CreateContestView() {
   // Challenge: optional condition-based subtasks (each its own field + budget; budgets sum to 1e6).
   const useSubs = apiMode && useSubtasks;
   const chBudgetSum = chSubtasks.reduce((a, s) => a + (Number(s.budget) || 0), 0);
-  const chFeatOk = chSubtasks.every((s) => featSchema.every((f) => { const v = s.features[f.key]; return Number.isFinite(v) && v >= f.min && v <= f.max; }));
+  const chFeatOk = chSubtasks.every((s) => featSchema.every((f) => { const r = s.features[f.key]; return Array.isArray(r) && r.length === 2 && r[0] >= f.min && r[0] <= r[1] && r[1] <= f.max; }));
   const chSeedOk = chSubtasks.every((s) => s.seedLo >= 0 && s.seedLo <= s.seedHi && s.seedHi <= 10_000_000);
   const chSubsOk = chSubtasks.length >= 1 && chBudgetSum === 1_000_000 && chFeatOk && chSeedOk;
   const stepOk = genType === "code" ? (genCode.trim().length > 0 && !codeHasTodo) : (useMissions ? missionsOk : genOk);
@@ -1295,8 +1295,12 @@ export function CreateContestView() {
   const featuresToGen = (f: Record<string, number>): GenParams => ({ hMin: f.h ?? 8, hMax: f.h ?? 8, wMin: f.w ?? 8, wMax: f.w ?? 8, dMin: f.dust ?? 0, dMax: f.dust ?? 0 });
   // Challenge subtask-table helpers.
   const setSub = (i: number, patch: Partial<{ name: string; seedLo: number; seedHi: number; budget: number }>) => setChSubtasks((s) => s.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const setSubFeat = (i: number, key: string, v: number) => setChSubtasks((s) => s.map((x, j) => (j === i ? { ...x, features: { ...x.features, [key]: v } } : x)));
-  const addSub = () => setChSubtasks((s) => [...s, { name: `조건 ${s.length + 1}`, features: Object.fromEntries(featSchema.map((f) => [f.key, f.default])), seedLo, seedHi, budget: 0 }]);
+  const setSubRange = (i: number, key: string, idx: 0 | 1, v: number) => setChSubtasks((s) => s.map((x, j) => {
+    if (j !== i) return x;
+    const cur = (x.features[key] ?? [0, 0]).slice(); cur[idx] = v;
+    return { ...x, features: { ...x.features, [key]: cur } };
+  }));
+  const addSub = () => setChSubtasks((s) => [...s, { name: `조건 ${s.length + 1}`, features: Object.fromEntries(featSchema.map((f) => [f.key, [f.default, f.default]])), seedLo, seedHi, budget: 0 }]);
   const distSub = () => setChSubtasks((s) => { const n = s.length || 1, base = Math.floor(1_000_000 / n); return s.map((x, i) => ({ ...x, budget: i === 0 ? 1_000_000 - base * (n - 1) : base })); });
   const imgBtn = (set: (fn: (s: string) => string) => void) => (
     <label className="btn ghost" style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer", display: "inline-block" }}>🖼 이미지 첨부
@@ -1410,7 +1414,7 @@ export function CreateContestView() {
         <span><b>조건별 서브태스크로 분할</b> — 조건(피처 범위)별로 나눠 각각 상대 등수 채점 후 배점 합산 (배점 합 = 1,000,000)</span>
       </label>}
       {useSubs ? <>
-        {field(<>부분문제(서브태스크) <span className="muted">— 정확 피처 + 시드 범위 + 배점 · 매 평가마다 각 부분문제에서 시드 1개 추출</span></>,
+        {field(<>부분문제(서브태스크) <span className="muted">— 피처 범위(min~max) + 시드 범위 + 배점 · 매 평가마다 각 부분문제에서 시드 1개 추출(피처는 범위 내 무작위)</span></>,
           <div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1424,7 +1428,7 @@ export function CreateContestView() {
                 <tbody>
                   {chSubtasks.map((s, i) => <tr key={i}>
                     <td style={{ padding: "3px 6px" }}><input value={s.name} onChange={(e) => setSub(i, { name: e.target.value })} style={{ width: 92, ...numCss }} /></td>
-                    {featSchema.map((f) => { const v = s.features[f.key]; const bad = !(Number.isFinite(v) && v >= f.min && v <= f.max); return <td key={f.key} style={{ padding: "3px 6px" }}><input type="number" value={Number.isFinite(v) ? v : ""} onChange={(e) => setSubFeat(i, f.key, parseInt(e.target.value || "0", 10) || 0)} style={{ width: 64, ...numCss, borderColor: bad ? "var(--bad)" : undefined }} /></td>; })}
+                    {featSchema.map((f) => { const r = s.features[f.key] ?? [f.default, f.default]; const bad = !(r[0] >= f.min && r[0] <= r[1] && r[1] <= f.max); return <td key={f.key} style={{ padding: "3px 6px", whiteSpace: "nowrap" }}><input type="number" value={r[0]} onChange={(e) => setSubRange(i, f.key, 0, parseInt(e.target.value || "0", 10) || 0)} style={{ width: 46, ...numCss, borderColor: bad ? "var(--bad)" : undefined }} />~<input type="number" value={r[1]} onChange={(e) => setSubRange(i, f.key, 1, parseInt(e.target.value || "0", 10) || 0)} style={{ width: 46, ...numCss, borderColor: bad ? "var(--bad)" : undefined }} /></td>; })}
                     <td style={{ padding: "3px 6px", whiteSpace: "nowrap" }}>{num(s.seedLo, (n) => setSub(i, { seedLo: n }), 70)}~{num(s.seedHi, (n) => setSub(i, { seedHi: n }), 70)}</td>
                     <td style={{ padding: "3px 6px" }}>{num(s.budget, (n) => setSub(i, { budget: n }), 96)}</td>
                     <td style={{ padding: "3px 6px" }}><button className="btn ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setChSubtasks((cs) => cs.filter((_, j) => j !== i))} disabled={chSubtasks.length <= 1}>✕</button></td>

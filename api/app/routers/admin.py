@@ -61,6 +61,24 @@ def _validate_features(meta: dict, feature_list: list[dict]) -> None:
                 raise HTTPException(400, f"피처 '{spec.get('label', key)}'는 {lo}~{hi} 범위여야 합니다 (입력: {v})")
 
 
+def _validate_feature_ranges(meta: dict, ranges_list: list[dict]) -> None:
+    """Validate per-feature [min, max] RANGES against the problem's feature_schema
+    (Challenge subtasks). A fixed feature is min == max."""
+    schema = meta.get("feature_schema")
+    if not schema:
+        raise HTTPException(400, "이 문제 템플릿은 피처 범위 저작을 지원하지 않습니다 (feature_schema 없음)")
+    for feats in ranges_list:
+        for spec in schema:
+            key = spec["key"]
+            rng = feats.get(key)
+            if not (isinstance(rng, (list, tuple)) and len(rng) == 2):
+                raise HTTPException(400, f"피처 '{spec.get('label', key)}'는 [최소, 최대] 범위여야 합니다")
+            lo, hi = int(rng[0]), int(rng[1])
+            smin, smax = spec.get("min"), spec.get("max")
+            if (smin is not None and lo < smin) or (smax is not None and hi > smax) or lo > hi:
+                raise HTTPException(400, f"피처 '{spec.get('label', key)}' 범위는 {smin}~{smax}, 최소 ≤ 최대여야 합니다")
+
+
 class GenParams(BaseModel):
     hMin: int = 6
     hMax: int = 9
@@ -85,10 +103,11 @@ class StepUpSpec(BaseModel):
 
 
 class ChallengeSubtaskSpec(BaseModel):
-    # A Challenge subtask is like a Step Up case (EXACT features + score) but its seed is a
-    # RANGE: each evaluation draws ONE fresh seed from [seed_lo, seed_hi] (1 seed per eval).
+    # A Challenge subtask = a part with per-feature RANGES and a seed RANGE: each evaluation
+    # draws ONE fresh seed (1 seed/eval) and the instance's features are drawn within the
+    # ranges. A "fixed" feature is just a range with min == max.
     name: str = Field(default="", max_length=60)
-    features: dict[str, int] = Field(default_factory=dict)     # exact features (problem-specific)
+    features: dict[str, list[int]] = Field(default_factory=dict)   # per-feature [min, max]
     seed_lo: int = Field(default=0, ge=0, le=10_000_000)
     seed_hi: int = Field(default=1_000_000, ge=0, le=10_000_000)
     budget: int = Field(ge=0, le=STEPUP_BUDGET)
@@ -145,7 +164,7 @@ def validate_create(body: CreateContestIn) -> None:
         if sum(s.budget for s in cst) != STEPUP_BUDGET:
             raise HTTPException(400, f"챌린지 서브태스크 배점 합이 정확히 {STEPUP_BUDGET:,}이어야 합니다 "
                                      f"(현재 {sum(s.budget for s in cst):,})")
-        _validate_features(meta, [s.features for s in cst])   # exact features within the schema
+        _validate_feature_ranges(meta, [s.features for s in cst])   # per-feature [min,max] within schema
         for s in cst:
             if not (0 <= s.seed_lo <= s.seed_hi <= 10_000_000):
                 raise HTTPException(400, f"서브태스크 '{s.name or '?'}' 시드 범위가 올바르지 않습니다 (0 ≤ 시작 ≤ 끝 ≤ 1천만)")
