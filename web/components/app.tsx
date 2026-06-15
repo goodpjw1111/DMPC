@@ -22,7 +22,7 @@ import {
   getContestDetail, getProblem, getStandings, getMyEval, getMissionInput,
   submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
-  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest,
+  getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest, deleteContest,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration,
 } from "@/lib/api";
@@ -632,6 +632,12 @@ function partScores(c: Contest, stepHist: StepSub[]) {
 export function ContestListView() {
   const { apiMode, isAdmin, contests, stepSubsFor } = useStore();
   const st = { live: "진행 중", ended: "종료", soon: "예정" } as const;
+  async function delContest(id: string, title: string) {
+    if (typeof window === "undefined") return;
+    if (!window.confirm(`'${title}'를 영구 삭제할까요?\n\n문제·제출·평가·랭킹·리플레이가 모두 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+    try { await deleteContest(id); window.location.reload(); }
+    catch (err: any) { window.alert("삭제 실패: " + String(err?.message ?? err)); }
+  }
   return <div className="wrap">
     <div className="row" style={{ justifyContent: "space-between", marginBottom: 18 }}><h1>모의고사 목록</h1>{isAdmin && <Link href="/create" className="btn">+ 새 모의고사 (관리자)</Link>}</div>
     {contests.length === 0 && <p className="muted" style={{ marginTop: 24 }}>참여할 수 있는 모의고사가 아직 없습니다.</p>}
@@ -648,6 +654,7 @@ export function ContestListView() {
           : apiMode
             ? <span className="btn ghost" style={{ opacity: .8, whiteSpace: "nowrap" }}>점수 보기 →</span>
             : <div style={{ flex: "1 1 240px", minWidth: 0 }}><Bar g={partScores(c, stepSubsFor(c.id)).total} t={1000000} /></div>}
+        {apiMode && isAdmin && <button className="btn ghost" title="모의고사 삭제 (관리자)" style={{ padding: "4px 9px", fontSize: 12, color: "var(--accent)", borderColor: "var(--accent)", whiteSpace: "nowrap" }} onClick={(e) => { e.preventDefault(); e.stopPropagation(); delContest(c.id, c.title); }}>🗑</button>}
       </div>
     </Link>)}
   </div>;
@@ -855,6 +862,13 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
     try { await publishContest(c.id); showToast("대회를 공개했습니다", "이제 진행 중(live) — 참가자에게 보입니다"); const d = await getContestDetail(c.id); setDetail(d); }
     catch (e: any) { showToast("공개 실패", String(e?.message ?? e)); }
   }
+  async function deleteNow() {
+    if (typeof window === "undefined") return;
+    const title = detail?.title ?? "이 모의고사";
+    if (!window.confirm(`'${title}'를 영구 삭제할까요?\n\n문제·제출·평가·랭킹·리플레이가 모두 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+    try { await deleteContest(c.id); showToast("모의고사를 삭제했습니다", "문제·제출·평가·랭킹이 모두 삭제되었습니다"); window.location.href = "/"; }
+    catch (e: any) { showToast("삭제 실패", String(e?.message ?? e)); }
+  }
   const podium: Podium[] = (standings ?? []).filter((s) => s.rank != null && s.rank <= 3)
     .map((s) => ({ rank: s.rank as number, nick: s.nickname, score: s.score, me: !!nick && s.nickname === nick }));
 
@@ -881,6 +895,9 @@ function ApiContestDetail({ contest: c }: { contest: Contest }) {
     </div>}
     {isAdmin && !ended && detail.status !== "draft" && <div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
       <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} onClick={endNow}>🏁 대회 종료 (관리자)</button>
+    </div>}
+    {isAdmin && <div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
+      <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 12, color: "var(--accent)", borderColor: "var(--accent)" }} onClick={deleteNow}>🗑 모의고사 삭제 (관리자)</button>
     </div>}
     {reg && <RegistrationCard registered={reg.registered} count={reg.count} open={reg.open} busy={regBusy} onToggle={toggleReg} />}
     {ended && <div className="tabs" style={{ justifyContent: "center", margin: "6px 0 20px" }}>

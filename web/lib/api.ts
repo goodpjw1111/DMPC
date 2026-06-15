@@ -162,6 +162,8 @@ export const endContest = (cid: string) =>
   apiPost<{ status: string; final_round_id: string; ends_at: string }>(`/api/admin/contests/${cid}/end`);
 export const publishContest = (cid: string) =>
   apiPost<{ status: string; starts_at: string; ends_at: string }>(`/api/admin/contests/${cid}/publish`);
+export const deleteContest = (cid: string) =>
+  apiPost<{ deleted: boolean; id: string }>(`/api/admin/contests/${cid}/delete`);
 
 // ---- replays (winners' writeups / 시상) ----
 export type Replay = {

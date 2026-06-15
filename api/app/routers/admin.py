@@ -354,3 +354,16 @@ async def publish_contest(cid: str, user: CurrentUser = Depends(require_admin)):
     await db.execute("UPDATE contests SET status='live', starts_at=$2, ends_at=$3 WHERE id=$1",
                      cid, now, ends_at)
     return {"status": "live", "starts_at": now.isoformat(), "ends_at": ends_at.isoformat()}
+
+
+@router.post("/contests/{cid}/delete")
+async def delete_contest(cid: str, user: CurrentUser = Depends(require_admin)):
+    """Admin: permanently DELETE a contest and everything under it — problems, submissions,
+    Step Up submissions, evaluation rounds, case_results, standings, registrations, replays
+    — all removed via ON DELETE CASCADE in one statement. IRREVERSIBLE; intended for clearing
+    out test contests. (notifications are not FK-linked to a contest, so any already-sent ones
+    remain — harmless.) POST (not DELETE) so it rides the existing CSRF-protected path."""
+    tag = await db.execute("DELETE FROM contests WHERE id=$1", cid)
+    if isinstance(tag, str) and tag.endswith(" 0"):
+        raise HTTPException(404, "대회를 찾을 수 없습니다")
+    return {"deleted": True, "id": cid}
