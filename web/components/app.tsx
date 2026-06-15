@@ -645,6 +645,11 @@ export function ContestListView() {
     catch (err: any) { window.alert("삭제 실패: " + String(err?.message ?? err)); }
   }
   return <div className="wrap">
+    <a href="https://discord.gg/ZRbZpBXGA" target="_blank" rel="noopener noreferrer" className="card"
+       style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, textDecoration: "none", borderColor: "#5865F2" }}>
+      <span style={{ fontSize: 20 }}>💬</span>
+      <span><b style={{ color: "#5865F2" }}>디스코드</b> <span className="muted">— 공지·질문은 여기서: </span><span style={{ color: "var(--fg)" }}>discord.gg/ZRbZpBXGA</span></span>
+    </a>
     <div className="row" style={{ justifyContent: "space-between", marginBottom: 18 }}><h1>모의고사 목록</h1>{isAdmin && <Link href="/create" className="btn">+ 새 모의고사 (관리자)</Link>}</div>
     {contests.length === 0 && <p className="muted" style={{ marginTop: 24 }}>참여할 수 있는 모의고사가 아직 없습니다.</p>}
     {contests.map((c) => <Link key={c.id} href={`/c/${c.id}`} className="card" style={{ marginBottom: 14, display: "block", textDecoration: "none" }}>
