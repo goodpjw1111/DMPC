@@ -26,7 +26,7 @@ export type ProblemDef = {
 };
 
 export type Contest = {
-  id: string; title: string; status: "live" | "ended" | "soon"; when: string;
+  id: string; title: string; status: "live" | "ended" | "soon" | "draft"; when: string;
   desc: string; total: number; gotten: number; rank?: number; nextEval?: string;
   // per-part scores, each out of 1,000,000 (Step Up live, Challenge last-evaluated).
   suScore?: number; chScore?: number;

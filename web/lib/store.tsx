@@ -26,6 +26,7 @@ type AuthState = "loading" | "mock" | "login" | "nickname" | "ready";
 // the detail/standings/submission endpoints are wired (those carry scores).
 function mapApiContest(a: ApiContest): Contest {
   const status: Contest["status"] = a.status === "live" ? "live"
+    : a.status === "draft" ? "draft"                                       // tester-only — its own status
     : (a.status === "ended" || a.status === "archived") ? "ended" : "soon";
   const when = `${a.starts_at.slice(0, 10)} ~ ${a.ends_at.slice(0, 10)}`;
   // desc/rank/nextEval/scores aren't in the list payload — the detail page fills them.

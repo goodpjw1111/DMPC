@@ -46,6 +46,7 @@ select.dd{background:#0f1117;color:var(--fg);border:1px solid var(--line2);borde
 .status{font-size:12px;padding:3px 10px;border-radius:999px;font-weight:600;}
 .status.live{background:#10331f;color:var(--green);} .status.ended{background:#2a2030;color:#c9a0ff;}
 .status.soon{background:#332a14;color:#f0c44a;}
+.status.draft{background:#16233a;color:#6ea8ff;}
 .solve{display:flex;gap:0;height:calc(100vh - 52px);}
 .pane{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);}
 .pane.left{border-right:1px solid var(--line);}

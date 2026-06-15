@@ -649,7 +649,7 @@ function partScores(c: Contest, stepHist: StepSub[]) {
 
 export function ContestListView() {
   const { apiMode, isAdmin, contests, stepSubsFor } = useStore();
-  const st = { live: "진행 중", ended: "종료", soon: "예정" } as const;
+  const st = { live: "진행 중", ended: "종료", soon: "예정", draft: "🧪 테스터 전용" } as const;
   async function delContest(id: string, title: string) {
     if (typeof window === "undefined") return;
     if (!window.confirm(`'${title}'를 영구 삭제할까요?\n\n문제·제출·평가·랭킹·리플레이가 모두 함께 삭제되며 되돌릴 수 없습니다.`)) return;
@@ -963,7 +963,9 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
   // status comes from the fetched detail (not the passed stub) so a deep-link / just-created
   // contest gates submission correctly even when it isn't in the cached list.
   const [contestStatus, setContestStatus] = useState(c.status);
-  const live = contestStatus === "live";
+  // a draft is a tester-only contest that starts immediately — only testers/admins can load
+  // it at all (server-gated), so anyone who reaches here may submit to it like a live one.
+  const live = contestStatus === "live" || contestStatus === "draft";
 
   const [pid, setPid] = useState<string | null>(null);
   const [problem, setProblem] = useState<ApiProblem | null>(null);
