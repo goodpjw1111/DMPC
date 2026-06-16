@@ -66,12 +66,14 @@ jobs:
           isolate --version
           # SMOKE: init + a real --run the SAME way the grader does (no --cg). Prints isolate's
           # own stderr + exit so any --run setup failure is visible right here, not buried in a round.
-          echo "=== isolate smoke (no --cg) ==="
-          isolate --box-id=0 --init && echo "init OK"
+          echo "=== isolate g++ compile smoke (full path, no --cg) ==="
+          GXX=$(command -v g++); echo "g++ = ${GXX:-MISSING}"
+          B=$(isolate --box-id=0 --init); echo "init OK: $B"
+          printf 'int main(){return 0;}\n' > "$B/box/s.cpp" || echo "WARN: box not writable"
           set +e
-          isolate --box-id=0 --run --processes=60 --mem=1048576 --time=5 --wall-time=10 --meta=/tmp/dmpc_smoke_meta.txt -- /bin/true
-          echo "isolate --run /bin/true exit=$?"
-          echo "--- meta ---"; cat /tmp/dmpc_smoke_meta.txt 2>/dev/null || echo "(no meta written)"
+          isolate --box-id=0 --run --processes=60 --mem=4194304 --time=20 --wall-time=30 --meta=/tmp/dmpc_smoke_meta.txt -- "$GXX" -O2 -o s s.cpp
+          echo "g++ smoke exit=$?"
+          ls -la "$B/box/s" >/dev/null 2>&1 && echo "g++ compile smoke: OK" || echo "g++ compile smoke: FAILED"
           set -e
           isolate --box-id=0 --cleanup >/dev/null 2>&1 || true
 

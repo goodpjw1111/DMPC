@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -191,6 +192,14 @@ class IsolateBox:
             flags.append(f"--env={k}={v}")
         # minimal, locale-stable environment
         flags += ["--env=PATH=/usr/local/bin:/usr/bin:/bin", "--env=HOME=/box"]
+
+        # isolate execve's the program DIRECTLY (no PATH search), so a bare command name like
+        # "g++"/"gcc"/"python3" fails with execve("g++"): No such file or directory. Resolve a
+        # bare name to its full path on the grader host (g++ -> /usr/bin/g++, in the sandbox's
+        # read-only /usr). A path with "/" (e.g. "./main", the compiled binary) is left as-is.
+        argv = list(argv)
+        if argv and "/" not in argv[0]:
+            argv[0] = shutil.which(argv[0]) or argv[0]
 
         cmd = [ISOLATE, *flags, "--run", "--", *argv]
         try:
