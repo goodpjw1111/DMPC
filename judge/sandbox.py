@@ -298,9 +298,14 @@ def compile_solution(box: IsolateBox, lang: Language, source: bytes) -> RunResul
     box.put(lang.source_name, source)
     if lang.compile is None:
         return RunResult(verdict=Verdict.OK)
+    # In no-cg mode the memory cap is RLIMIT_AS (address space), and g++ compiling
+    # <bits/stdc++.h> at -O2 reserves well over 1 GB of address space -> a 1 GB cap makes it
+    # fail with "virtual memory exhausted". Give the compiler generous headroom there (the
+    # compile is trusted + bounded by compile_time_limit_ms). With cgroup, RSS at 1 GB is fine.
+    compile_mem_mb = 1024 if USE_CG else 4096
     res = box.run(
         _subst(lang.compile, lang),
-        Limits(time_ms=lang.compile_time_limit_ms, memory_mb=1024,
+        Limits(time_ms=lang.compile_time_limit_ms, memory_mb=compile_mem_mb,
                processes=max(16, lang.processes), fsize_kb=256 * 1024, open_files=512),
     )
     if res.verdict == Verdict.INTERNAL:
