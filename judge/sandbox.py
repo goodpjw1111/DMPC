@@ -35,6 +35,13 @@ from calibration import effective_time_ms, load_factor
 from languages import Language
 
 ISOLATE = os.environ.get("ISOLATE_BIN", "isolate")
+# cgroup v2 needs a delegated control group that GitHub-hosted runners don't grant, so
+# `isolate --cg --init` fails there ("isolate init failed"). DMPC_ISOLATE_NO_CG=1 drops --cg
+# and limits memory with the --mem rlimit (RLIMIT_AS) instead of --cg-mem. The SECURITY
+# boundary is UNCHANGED — isolate still runs the code in fresh PID/network/mount namespaces,
+# so the sandboxed program cannot read the parent worker's /proc/<ppid>/environ (the secrets)
+# nor reach the network. Only memory accounting changes (RLIMIT_AS address space vs cgroup RSS).
+USE_CG = os.environ.get("DMPC_ISOLATE_NO_CG") != "1"
 
 # Per-host time scaling vs the NYPC c7a reference (DMPC_CALIBRATION_FACTOR env).
 # 1.0 = no scaling (assume this host == c7a). See judge/calibration.py.
@@ -128,7 +135,7 @@ class IsolateBox:
             pass  # best-effort; a stuck box must not mask the real error
 
     def _isolate(self, *args: str) -> str:
-        cmd = [ISOLATE, "--cg", f"--box-id={self.box_id}", *args]
+        cmd = [ISOLATE, *(["--cg"] if USE_CG else []), f"--box-id={self.box_id}", *args]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True,
                                   timeout=ISOLATE_KILL_GRACE_S * 3)
@@ -158,13 +165,14 @@ class IsolateBox:
         (self.path / "_stdin").write_bytes(stdin)
 
         flags = [
-            "--cg",
+            *(["--cg"] if USE_CG else []),
             f"--box-id={self.box_id}",
             f"--meta={meta_path}",
             f"--time={limits.time_ms / 1000:.3f}",
             f"--wall-time={limits.wall() / 1000:.3f}",
             "--extra-time=0.5",
-            f"--cg-mem={limits.memory_mb * 1024}",      # KB
+            # cgroup RSS limit when available; else the RLIMIT_AS address-space limit.
+            (f"--cg-mem={limits.memory_mb * 1024}" if USE_CG else f"--mem={limits.memory_mb * 1024}"),  # KB
             f"--processes={limits.processes}",
             f"--fsize={limits.fsize_kb}",
             f"--open-files={limits.open_files}",

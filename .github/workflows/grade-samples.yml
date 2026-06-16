@@ -62,6 +62,7 @@ jobs:
           DATABASE_URL: "${{ secrets.DATABASE_URL }}"
           DMPC_CALIBRATION_FACTOR: "1.5"          # EPYC runner ≈ 0.68x c7a; measure to refine
           ISOLATE_BOX_ID: "0"
+          DMPC_ISOLATE_NO_CG: "1"   # GitHub runners can't delegate cgroup v2 -> run isolate w/o --cg
           DMPC_UNSAFE_NO_SANDBOX: "${{ vars.DMPC_UNSAFE_NO_SANDBOX }}"   # TEST ONLY: set repo var=1 to skip isolate
         run: |
           pip install --no-cache-dir asyncpg
