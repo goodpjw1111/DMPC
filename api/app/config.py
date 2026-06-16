@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # --- data -------------------------------------------------------------
     database_url: str = "postgresql://dmpc:dmpc@localhost:5432/dmpc"
 
+    # MUST equal the grader's EVAL_SEED_SECRET. Only used to REGENERATE a round's hidden
+    # Challenge inputs for the contestant's own "평가 입력 다운로드" (same derivation as the
+    # grader). Empty = download disabled (503). Never exposes other users' data.
+    eval_seed_secret: str = ""
+
     # --- CI dispatch (optional): auto-trigger grading workflows on submit/eval ----
     github_dispatch_token: str = ""    # PAT (fine-grained: Contents R/W + Metadata: Read, or classic `repo`); empty = manual only
     github_repo: str = ""              # "owner/name" (set via GITHUB_REPO env)

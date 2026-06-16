@@ -131,6 +131,8 @@ export const getProblemRefCosts = (pid: string, seed?: number) =>
   apiGet<RefCosts>(`/api/problems/${pid}/ref-costs${seed != null ? `?seed=${seed}` : ""}`);
 export const getStandings = (cid: string) => apiGet<StandingRow[]>(`/api/contests/${cid}/standings`);
 export const getMyEval = (cid: string) => apiGet<MyEval>(`/api/contests/${cid}/my-eval`);
+// download (own) latest-eval challenge inputs — regenerated boards you were graded on. <a href>.
+export const myEvalInputsUrl = (cid: string) => `${API_BASE}/api/contests/${cid}/my-eval/inputs`;
 export const missionInputUrl = (pid: string, seed: number) => `${API_BASE}/api/problems/${pid}/missions/${seed}/input`;
 export const getMissionInput = (pid: string, seed: number) => apiGetText(`/api/problems/${pid}/missions/${seed}/input`);
 
@@ -148,6 +150,9 @@ export const submitChallenge = (pid: string, language_id: string, source: string
 };
 export const getChallengeSubmissions = (pid: string) =>
   apiGet<ChallengeSubmission[]>(`/api/problems/${pid}/challenge/submissions`);
+// download the caller's own submitted source (owner-only); used as an <a href> (cookies sent).
+export const challengeSourceUrl = (pid: string, sid: string) =>
+  `${API_BASE}/api/problems/${pid}/challenge/submissions/${sid}/source`;
 
 // ---- notifications ----
 export const getNotifications = () => apiGet<ApiNotif[]>("/api/notifications");

@@ -6,10 +6,12 @@ import sys
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from .. import db, grading
+from ..config import get_settings
 from ..deps import CurrentUser, assert_contest_ended, get_current_user
 
 # judge core (registry) for missions/inputs
 sys.path.insert(0, grading._JUDGE)
+from eval_round import derive_seeds  # noqa: E402
 from grader import mission_budgets, mission_params, mission_weights  # noqa: E402
 from registry import effective_meta, load_problem  # noqa: E402
 from scoring import weighted_total  # noqa: E402
@@ -190,6 +192,77 @@ async def my_eval(cid: str, user: CurrentUser = Depends(get_current_user)):
                    "runtime_ms": r["runtime_ms"], "case_score": r["case_score"],
                    "case_rank": r["case_rank"]} for r in cases],
     }
+
+
+def _challenge_seed_features(problem_key: str, scoring_config: dict, idem_key: str, secret: str) -> dict[int, dict]:
+    """Recompute a round's challenge seed -> gen-features map the SAME way the grader did
+    (eval_round.derive_seeds + first-unused pick across subtasks, in order), so we can regenerate
+    the EXACT graded board. Mirrors worker/grade_round._challenge_case_raws. Legacy pool fallback."""
+    cfg = scoring_config or {}
+    out: dict[int, dict] = {}
+    subs = cfg.get("challenge_subtasks")
+    if subs:
+        used: set[int] = set()
+        for i, st in enumerate(subs):
+            lo, hi = int(st.get("seed_lo", 0)), int(st.get("seed_hi", 0))
+            cands = derive_seeds(secret, idem_key, f"{problem_key}#{i}", 64, lo, hi)
+            pick = next((s for s in cands if s not in used), None)
+            if pick is None:
+                continue
+            used.add(pick)
+            out[pick] = st.get("features") or {}
+        return out
+    rng = cfg.get("seed_range") or [0, 0]                      # legacy single-pool
+    for s in derive_seeds(secret, idem_key, problem_key, int(cfg.get("round_seeds", 1)), int(rng[0]), int(rng[1])):
+        out[s] = cfg.get("gen_params") or {}
+    return out
+
+
+@router.get("/contests/{cid}/my-eval/inputs")
+async def my_eval_inputs(cid: str, user: CurrentUser = Depends(get_current_user)):
+    """Download the caller's OWN latest-eval CHALLENGE inputs — the hidden boards they were graded
+    on — regenerated deterministically (same seeds/params as the grader). Owner-only; needs the
+    API's EVAL_SEED_SECRET (== grader's). Step Up inputs are already downloadable per mission."""
+    c = await db.fetchrow("SELECT id, status FROM contests WHERE id=$1", cid)
+    if not c or (c["status"] not in _RELEASED and not user.is_tester):
+        raise HTTPException(404, "not found")
+    secret = get_settings().eval_seed_secret
+    if not secret:
+        raise HTTPException(503, "평가 입력 재생성 설정이 없습니다 (서버에 EVAL_SEED_SECRET 미설정)")
+    rnd = await db.fetchrow(
+        """SELECT id, idem_key FROM evaluation_rounds
+           WHERE contest_id=$1 AND status='done' AND published_at IS NOT NULL
+           ORDER BY scheduled_at DESC LIMIT 1""", cid)
+    if not rnd:
+        raise HTTPException(404, "아직 공개된 평가가 없습니다")
+    rows = await db.fetch(
+        """SELECT cr.seed, p.problem_key, p.scoring_config
+           FROM case_results cr JOIN problems p ON cr.problem_id = p.id
+           WHERE cr.round_id=$1 AND cr.user_id=$2 AND p.kind='challenge'
+           ORDER BY p.problem_key, cr.seed""",
+        rnd["id"], user.id,
+    )
+    parts: list[str] = []
+    feat_cache: dict[str, dict] = {}
+    for r in rows:
+        key = r["problem_key"]
+        if key not in feat_cache:
+            feat_cache[key] = _challenge_seed_features(key, _as_dict(r["scoring_config"]), rnd["idem_key"], secret)
+        feats = feat_cache[key].get(r["seed"])
+        if feats is None:
+            continue
+        try:
+            inp = load_problem(key).generate(r["seed"], feats)
+        except Exception:                       # noqa: BLE001 — skip a case we can't regenerate
+            continue
+        parts.append(f"### seed {r['seed']}\n{inp.rstrip(chr(10))}\n")
+    if not parts:
+        raise HTTPException(404, "이 평가에 대한 챌린지 입력을 재생성할 수 없습니다")
+    rid = str(rnd["id"])[:8]
+    return Response(
+        "\n".join(parts), media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="eval_inputs_{rid}.txt"'},
+    )
 
 
 def _example_io(mod, meta: dict, kind: str) -> tuple[str | None, str | None]:

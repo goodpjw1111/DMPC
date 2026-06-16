@@ -7,7 +7,7 @@ import json
 import sys
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from .. import ci_dispatch, db, grading
@@ -216,3 +216,24 @@ async def challenge_submissions(pid: str, user: CurrentUser = Depends(get_curren
              # compiler stderr on compile_error, so the contestant sees WHY (not just "컴파일 오류").
              "compile_log": (r["compile_log"][:4000] if r["compile_log"] else None),
              "created_at": r["created_at"].isoformat()} for r in rows]
+
+
+_SRC_EXT = {"cpp20": "cpp", "c17": "c", "python3": "py", "java21": "java", "csharp": "cs",
+            "kotlin": "kt", "go": "go", "rust": "rs", "node": "js", "ruby": "rb", "swift": "swift", "php": "php"}
+
+
+@router.get("/problems/{pid}/challenge/submissions/{sid}/source")
+async def challenge_submission_source(pid: str, sid: str, user: CurrentUser = Depends(get_current_user)):
+    """Download the caller's OWN submitted source (owner-only — never exposes other users' code)."""
+    await _released_problem(pid, "challenge", tester=user.is_tester)
+    r = await db.fetchrow(
+        "SELECT source_text, language_id FROM submissions WHERE id=$1 AND problem_id=$2 AND user_id=$3",
+        sid, pid, user.id,
+    )
+    if not r:
+        raise HTTPException(404, "제출을 찾을 수 없습니다")
+    ext = _SRC_EXT.get(r["language_id"], "txt")
+    return Response(
+        r["source_text"] or "", media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="submission_{sid[:8]}.{ext}"'},
+    )

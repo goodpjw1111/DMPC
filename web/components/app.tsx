@@ -20,8 +20,8 @@ import {
 import { registerSimulator, getSimulator } from "@/lib/simulators";
 import { parseMaze, replayMaze, MAZE_KEYS, type MazeInst, type MazeState } from "@/lib/maze";
 import {
-  getContestDetail, getProblem, getProblemExample, getProblemRefCosts, getStandings, getMyEval, getMissionInput,
-  submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, createContest,
+  getContestDetail, getProblem, getProblemExample, getProblemRefCosts, getStandings, getMyEval, myEvalInputsUrl, getMissionInput,
+  submitStepup, getStepupSubmissions, submitChallenge, getChallengeSubmissions, challengeSourceUrl, createContest,
   getReplays, getMyReplay, postReplay, replayPdfUrl, moderateReplay,
   getRegistration, registerContest, unregisterContest, getTemplates, evaluateNow, endContest, publishContest, deleteContest,
   getEvalHealth, retryEvals,
@@ -1276,7 +1276,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
         </>}
 
         {rightTab === "history" && isStep && <ApiStepHistory hist={stepHist} mission={mission} setMission={setMission} missions={missions} seed={curSeed} budget={curBudget} refCost={curRef} />}
-        {rightTab === "history" && !isStep && <ApiChHistory hist={chHist} />}
+        {rightTab === "history" && !isStep && <ApiChHistory hist={chHist} pid={pid} />}
         {rightTab === "eval" && <>
           <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
             <button className="btn ghost" style={{ padding: "4px 12px", fontSize: 12 }} onClick={loadEval}>↻ 새로고침</button>
@@ -1291,7 +1291,7 @@ function ApiProblemView({ contest: c, kind }: { contest: Contest; kind: "stepup"
             </div>
             <EvalHealthLine health={evalHealth} />
           </div>}
-          <ApiEval data={myEval} err={evalErr} />
+          <ApiEval data={myEval} err={evalErr} cid={c.id} />
         </>}
       </div>
     </div>
@@ -1318,19 +1318,20 @@ const CH_STATE_KO: Record<string, string> = {
   queued: "대기 중", compiling: "컴파일 중", running: "실행 중", sample_running: "샘플 채점 중",
   sample_done: "샘플 완료", done: "완료", compile_error: "컴파일 오류", errored: "오류",
 };
-function ApiChHistory({ hist }: { hist: ChallengeSubmission[] | null }) {
+function ApiChHistory({ hist, pid }: { hist: ChallengeSubmission[] | null; pid: string | null }) {
   if (hist === null) return <ApiLoading label="제출 내역 불러오는 중…" />;
   const ce = hist.find((h) => h.state === "compile_error" && h.compile_log);   // most recent CE with a log
   return <>
     <h2 style={{ margin: "4px 0 8px" }}>최종 제출 목록</h2>
     <p className="muted" style={{ margin: "0 0 8px", fontSize: 12 }}>가장 <b>최근 제출</b>이 다음 중간 평가에 사용됩니다. 점수(상대 등수)는 평가 때 산정돼요(그 전 0점).</p>
-    <table><tbody><tr><th>제출 시각</th><th>언어</th><th>상태</th><th>샘플 비용 합</th></tr>
+    <table><tbody><tr><th>제출 시각</th><th>언어</th><th>상태</th><th>샘플 비용 합</th><th>코드</th></tr>
       {hist.length ? hist.map((h, i) => <tr key={h.id} className={i === 0 ? "sel" : ""}>
         <td className="muted">{fmtAt(h.created_at)}{i === 0 && <span className="pill" style={{ marginLeft: 6 }}>대표</span>}</td>
         <td>{h.language_id}</td>
         <td>{h.state === "done" || h.state === "sample_done" ? <span className="ok">{CH_STATE_KO[h.state] ?? h.state}</span> : (h.state === "errored" || h.state === "compile_error") ? <span className="bad">{CH_STATE_KO[h.state] ?? h.state}</span> : <span className="muted">{CH_STATE_KO[h.state] ?? h.state}</span>}</td>
-        <td>{h.sample_score_sum != null ? <b>{fmt(h.sample_score_sum)}</b> : <span className="muted">—</span>}</td></tr>)
-        : <tr><td colSpan={4} className="muted" style={{ padding: 16, textAlign: "center" }}>아직 제출이 없어요.</td></tr>}
+        <td>{h.sample_score_sum != null ? <b>{fmt(h.sample_score_sum)}</b> : <span className="muted">—</span>}</td>
+        <td>{pid ? <a className="btn ghost" style={{ padding: "3px 9px", fontSize: 12 }} href={challengeSourceUrl(pid, h.id)}>⬇ 코드</a> : <span className="muted">—</span>}</td></tr>)
+        : <tr><td colSpan={5} className="muted" style={{ padding: 16, textAlign: "center" }}>아직 제출이 없어요.</td></tr>}
     </tbody></table>
     {ce && <div className="card" style={{ marginTop: 10, borderColor: "var(--bad)" }}>
       <div className="bad" style={{ fontWeight: 700, fontSize: 12 }}>컴파일 오류 로그 (최근 제출)</div>
@@ -1397,7 +1398,7 @@ function PendingEval({ status }: { status: string }) {
   </div>;
 }
 
-function ApiEval({ data, err }: { data: MyEval | null; err: string }) {
+function ApiEval({ data, err, cid }: { data: MyEval | null; err: string; cid: string }) {
   if (err) return <ApiErrorCard msg={err} />;
   if (data === null) return <ApiLoading label="중간 평가 불러오는 중…" />;
   if (!data.round) {
@@ -1405,21 +1406,33 @@ function ApiEval({ data, err }: { data: MyEval | null; err: string }) {
     return <div className="card"><b>아직 중간 평가가 없어요</b><p className="muted" style={{ margin: "8px 0 0" }}>매일 09:00·18:00(KST)에 비공개 데이터로 평가합니다. 결과가 공개되면 여기에 본인 점수·등수가 표시됩니다.</p></div>;
   }
   const r = data.round, s = data.standing;
+  const isFinal = r.type === "final";   // overall rank + challenge performance only revealed at the end
   return <>
     {data.pending && <div style={{ marginBottom: 10 }}><PendingEval status={data.pending} /></div>}
-    <h2 style={{ margin: "4px 0 2px" }}>{r.type === "final" ? "최종 평가" : "중간 평가"} 결과</h2>
+    <h2 style={{ margin: "4px 0 2px" }}>{isFinal ? "최종 평가" : "중간 평가"} 결과</h2>
     <p className="muted" style={{ margin: "0 0 12px" }}>{fmtAt(r.published_at)} 공개 · 채점 시각 {fmtAt(r.scheduled_at)}</p>
-    {s && <div className="card" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 28, flexWrap: "wrap" }}>
-      <div><div className="k muted" style={{ fontSize: 11 }}>🌸 챌린지 (퍼포먼스 점수)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.challenge_score)}</div></div>
-      <div><div className="k muted" style={{ fontSize: 11 }}>총점</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.total_score)}</div></div>
-      <div><div className="k muted" style={{ fontSize: 11 }}>스텝업</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmt(s.stepup_score)}</div></div>
-    </div><p className="muted" style={{ margin: "8px 0 0", fontSize: 11 }}>※ 등수(상대 순위)는 대회 종료 후에만 공개됩니다 — 진행 중에는 본인 점수만 표시.</p></div>}
-    <h3 style={{ margin: "0 0 8px" }}>테스트케이스별 점수</h3>
-    {data.cases.length ? <div className="tscroll"><table><tbody><tr><th>시드</th><th>결과</th><th>비용</th><th>내 점수</th><th>실행시간</th></tr>
+    {s && <div className="card" style={{ marginBottom: 14 }}>
+      {isFinal
+        ? <><div className="row" style={{ gap: 28, flexWrap: "wrap" }}>
+            <div><div className="k muted" style={{ fontSize: 11 }}>🌸 챌린지</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.challenge_score)}</div></div>
+            <div><div className="k muted" style={{ fontSize: 11 }}>총점</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.total_score)}</div></div>
+            <div><div className="k muted" style={{ fontSize: 11 }}>스텝업</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmt(s.stepup_score)}</div></div>
+          </div></>
+        : <><div className="row" style={{ gap: 28, flexWrap: "wrap" }}>
+            <div><div className="k muted" style={{ fontSize: 11 }}>스텝업 점수 (절대)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(s.stepup_score)}</div></div>
+          </div>
+          <p className="muted" style={{ margin: "8px 0 0", fontSize: 11 }}>※ 챌린지 퍼포먼스 점수·전체 등수는 <b>대회 종료 후</b> 공개됩니다. 진행 중에는 아래 <b>케이스별 결과·등수</b>만 표시돼요.</p></>}
+    </div>}
+    <div className="row" style={{ justifyContent: "space-between", alignItems: "center", margin: "0 0 8px" }}>
+      <h3 style={{ margin: 0 }}>테스트케이스별 결과</h3>
+      {data.cases.length > 0 && <a className="btn ghost" style={{ padding: "5px 12px", fontSize: 12 }} href={myEvalInputsUrl(cid)}>⬇ 평가 입력(챌린지) 다운로드</a>}
+    </div>
+    {data.cases.length ? <div className="tscroll"><table><tbody><tr><th>시드</th><th>결과</th><th>비용</th><th>케이스 등수</th><th>내 점수</th><th>실행시간</th></tr>
       {data.cases.map((cs, j) => <tr key={j}>
         <td className="muted">{cs.seed}</td>
         <td>{cs.verdict === "ok" ? <span className="ok">정상</span> : <span className="bad">{VERDICT_KO[cs.verdict] ?? cs.verdict}</span>}</td>
         <td>{cs.raw_cost != null ? fmt(Math.round(cs.raw_cost)) : "—"}</td>
+        <td>{cs.case_rank != null ? <b>{cs.case_rank}위</b> : <span className="muted">—</span>}</td>
         <td style={{ minWidth: 90 }}>{cs.case_score != null ? <Bar g={cs.case_score} t={1000000} sm /> : <span className="muted">—</span>}</td>
         <td className="muted">{cs.runtime_ms != null ? `${cs.runtime_ms} ms` : "—"}</td></tr>)}
     </tbody></table></div> : <p className="muted">이 평가에 대한 케이스 결과가 없습니다.</p>}
