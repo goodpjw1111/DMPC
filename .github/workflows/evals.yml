@@ -57,6 +57,15 @@ jobs:
           git clone --depth 1 https://github.com/ioi/isolate /tmp/isolate
           sudo make -C /tmp/isolate install
           isolate --version
+          # isolate v2 maps sandbox UIDs via /etc/subuid+/etc/subgid for its config's
+          # subid_user (default "isolate"); GitHub runners lack it -> "User isolate not found
+          # in /etc/subuid". Create the user + ranges so `isolate --init` passes.
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin isolate 2>/dev/null || true
+          grep -q '^isolate:' /etc/subuid || echo 'isolate:100000:65536' | sudo tee -a /etc/subuid
+          grep -q '^isolate:' /etc/subgid || echo 'isolate:100000:65536' | sudo tee -a /etc/subgid
+          isolate --version
+          # verify init the SAME way the grader runs it (no --cg, matching DMPC_ISOLATE_NO_CG=1)
+          isolate --box-id=0 --init && isolate --box-id=0 --cleanup && echo "isolate init OK (no-cg)"
 
       - name: One scheduler tick (status flips + create + grade due rounds)
         if: steps.guard.outputs.go == 'true'
