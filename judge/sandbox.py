@@ -191,8 +191,8 @@ class IsolateBox:
         try:
             # isolate enforces --wall-time internally; this is a backstop in case
             # isolate itself wedges. Kill grace beyond the run's wall budget.
-            subprocess.run(cmd, capture_output=True,  # exit code reflected in meta
-                           timeout=limits.wall() / 1000 + ISOLATE_KILL_GRACE_S)
+            proc = subprocess.run(cmd, capture_output=True,  # exit code reflected in meta
+                                  timeout=limits.wall() / 1000 + ISOLATE_KILL_GRACE_S)
         except subprocess.TimeoutExpired as e:
             raise IsolateInternalError("isolate --run hung past wall budget") from e
 
@@ -201,7 +201,10 @@ class IsolateBox:
         stderr_tail = _read_capped(self.path / "_stderr", 16 * 1024).decode(
             "utf-8", "replace"
         )
-        return _classify(meta, stdout, stderr_tail, limits)
+        # isolate's OWN stderr (e.g. "Cannot ...", a cgroup/userns/mount error) — kept so an
+        # INTERNAL failure surfaces WHY instead of a generic "isolate failure".
+        isolate_err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        return _classify(meta, stdout, stderr_tail, limits, isolate_err)
 
 
 # --- helpers ---------------------------------------------------------------
@@ -226,7 +229,8 @@ def _read_capped(path: Path, cap: int) -> bytes:
         return b""
 
 
-def _classify(meta: dict, stdout: bytes, stderr_tail: str, limits: Limits) -> RunResult:
+def _classify(meta: dict, stdout: bytes, stderr_tail: str, limits: Limits,
+              isolate_err: str = "") -> RunResult:
     status = meta.get("status", "")
     time_ms = int(float(meta.get("time", "0")) * 1000)
     wall_ms = int(float(meta.get("time-wall", "0")) * 1000)
@@ -239,6 +243,8 @@ def _classify(meta: dict, stdout: bytes, stderr_tail: str, limits: Limits) -> Ru
         # infra failure to re-queue, NOT a clean empty-output OK run (which the
         # checker would then mark ILLEGAL — a wrongful loss for the contestant).
         verdict = Verdict.INTERNAL
+        if isolate_err and not message:
+            message = isolate_err[-300:]    # surface isolate's own reason (XX/setup failure)
     elif status == "TO":
         verdict = Verdict.TLE
     elif status == "SG":

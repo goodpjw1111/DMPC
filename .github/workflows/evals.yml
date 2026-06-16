@@ -64,8 +64,15 @@ jobs:
           grep -q '^isolate:' /etc/subuid || echo 'isolate:100000:65536' | sudo tee -a /etc/subuid
           grep -q '^isolate:' /etc/subgid || echo 'isolate:100000:65536' | sudo tee -a /etc/subgid
           isolate --version
-          # verify init the SAME way the grader runs it (no --cg, matching DMPC_ISOLATE_NO_CG=1)
-          isolate --box-id=0 --init && isolate --box-id=0 --cleanup && echo "isolate init OK (no-cg)"
+          # SMOKE: init + a real --run the SAME way the grader does (no --cg). Prints isolate's
+          # own stderr + exit so any --run setup failure is visible right here, not buried in a round.
+          echo "=== isolate smoke (no --cg) ==="
+          isolate --box-id=0 --init && echo "init OK"
+          set +e
+          isolate --box-id=0 --run --processes=60 --mem=1048576 --time=5 --wall-time=10 -- /bin/true
+          echo "isolate --run /bin/true exit=$?"
+          set -e
+          isolate --box-id=0 --cleanup >/dev/null 2>&1 || true
 
       - name: One scheduler tick (status flips + create + grade due rounds)
         if: steps.guard.outputs.go == 'true'

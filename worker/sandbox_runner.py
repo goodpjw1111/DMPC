@@ -35,7 +35,9 @@ def run_over_seeds(box_id: int, problem, lang, source: bytes, seeds: list[int],
     with IsolateBox(box_id) as box:
         compiled = compile_solution(box, lang, source)
         if compiled.verdict == Verdict.INTERNAL:
-            raise IsolateInternalError("isolate failure during compile")
+            detail = (compiled.message or compiled.stderr_tail or "").strip()
+            raise IsolateInternalError(
+                "isolate failure during compile" + (f": {detail[:300]}" if detail else ""))
         if compiled.verdict == Verdict.COMPILE_ERROR:
             return None, False, compiled.stderr_tail
 
@@ -46,7 +48,9 @@ def run_over_seeds(box_id: int, problem, lang, source: bytes, seeds: list[int],
             res = run_case(box, lang, CaseInput(seed=0, stdin=input_text.encode()), base)
             if res.verdict == Verdict.INTERNAL:
                 # surface as an exception so callers don't fold infra into a None cost.
-                raise IsolateInternalError("isolate failure during run")
+                detail = (res.message or "").strip()
+                raise IsolateInternalError(
+                    "isolate failure during run" + (f": {detail[:300]}" if detail else ""))
             return (res.stdout.decode("utf-8", "replace"), res.time_ms, res.verdict)
 
         return grade_cases(problem, seeds, runner, gen_params), True, ""
