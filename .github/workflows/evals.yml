@@ -69,8 +69,9 @@ jobs:
           echo "=== isolate smoke (no --cg) ==="
           isolate --box-id=0 --init && echo "init OK"
           set +e
-          isolate --box-id=0 --run --processes=60 --mem=1048576 --time=5 --wall-time=10 -- /bin/true
+          isolate --box-id=0 --run --processes=60 --mem=1048576 --time=5 --wall-time=10 --meta=/tmp/dmpc_smoke_meta.txt -- /bin/true
           echo "isolate --run /bin/true exit=$?"
+          echo "--- meta ---"; cat /tmp/dmpc_smoke_meta.txt 2>/dev/null || echo "(no meta written)"
           set -e
           isolate --box-id=0 --cleanup >/dev/null 2>&1 || true
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -161,7 +162,11 @@ class IsolateBox:
         env: dict[str, str] | None = None,
     ) -> RunResult:
         assert self.path is not None
-        meta_path = self.path.parent / "meta.txt"
+        # Write the metafile to a world-writable temp path, NOT the isolate box root
+        # (/var/local/lib/isolate/<id>/): under isolate v2's user-namespace model the box root
+        # isn't writable by the uid isolate writes the meta as -> "Failed to open metafile".
+        meta_path = Path(tempfile.gettempdir()) / f"dmpc_isolate_meta_{self.box_id}.txt"
+        meta_path.unlink(missing_ok=True)         # avoid reading a previous run's stale meta
         (self.path / "_stdin").write_bytes(stdin)
 
         flags = [
