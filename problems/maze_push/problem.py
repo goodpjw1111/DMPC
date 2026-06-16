@@ -242,13 +242,13 @@ def example_inputs(meta: dict, kind: str) -> list[dict]:
     [{label, input, output|None}]. Used by GET /problems/{pid}/example (overrides the generic one)."""
     if kind == "challenge":
         specs = [
-            ("예시 1 — C = 1 (다오 혼자)", 9001, {"rows": 30, "cols": 30, "players": 1, "obstacles": 40, "blocks": 80}),
-            ("예시 2 — C = 2 (배찌 도우미)", 9002, {"rows": 30, "cols": 30, "players": 2, "obstacles": 40, "blocks": 80}),
+            ("예시 1 — C = 1 (다오 혼자)", 9001, {"rows": 30, "cols": 30, "players": 1, "obstacles": 120, "blocks": 120}),
+            ("예시 2 — C = 2 (배찌 도우미)", 9002, {"rows": 30, "cols": 30, "players": 2, "obstacles": 120, "blocks": 120}),
         ]
         return [{"label": lbl, "input": generate(s, p), "output": None} for (lbl, s, p) in specs]
     specs = [
-        ("예시 1 — C = 1 (다오 혼자)", 9011, {"rows": 5, "cols": 5, "players": 1, "obstacles": 2, "blocks": 3}),
-        ("예시 2 — C = 2 (배찌 도우미)", 9012, {"rows": 6, "cols": 6, "players": 2, "obstacles": 2, "blocks": 4}),
+        ("예시 1 — C = 1 (다오 혼자)", 9011, {"rows": 10, "cols": 10, "players": 1, "obstacles": 22, "blocks": 20}),
+        ("예시 2 — C = 2 (배찌 도우미)", 9012, {"rows": 10, "cols": 10, "players": 2, "obstacles": 22, "blocks": 20}),
     ]
     res = []
     for (lbl, s, p) in specs:
@@ -333,54 +333,107 @@ def _moves_of(path) -> list:
     return [_CHAR[(b[0] - a[0], b[1] - a[1])] for a, b in zip(path, path[1:])]
 
 
-def corridor_witness(inst: Instance):
-    """A VALID (not necessarily optimal) solution for a board carrying the generator's chokepoint
-    barrier: Dao walks to the cell behind the gap, pushes the gap block one step, then walks on to
-    the goal. Serves as a solvability WITNESS and as the Step-Up reference FALLBACK when a board is
-    too dense for an exact Sokoban solve (which is intractable in general). Returns a move string,
-    or None if the board carries no detectable barrier."""
-    R, C = inst.R, inst.C
-    walls, blocks, dao, goal, bazzi, P = inst.walls, inst.blocks, inst.dao, inst.goal, inst.bazzi, inst.P
-    # locate the barrier anti-diagonal: line r+c==K that is all walls except exactly one block.
-    line = None
-    for K in range(1, R + C - 2):
-        cells = [(r, K - r) for r in range(max(0, K - (C - 1)), min(R, K + 1))]
-        nb = sum(x in blocks for x in cells)
-        no = sum(x not in walls and x not in blocks and x not in (dao, goal) and x != bazzi for x in cells)
-        if nb == 1 and no == 0 and any(x in walls for x in cells):
-            line = cells
-            break
-    if line is None:
+# --- multi-barrier corridor (the generator's guaranteed solution) -----------
+# The board carries SEVERAL anti-diagonal barriers (each a wall line with one pushable-block gap),
+# the gaps OFFSET so a solution must zig-zag and push through each in turn — NO single push opens a
+# path. These helpers verify/reconstruct that corridor (walk behind a gap, push it one step, walk
+# to the next gap, ...). `anchors` = the ordered list of (gap, behind, ahead).
+
+def _corridor_ok(R, C, walls, blocks, dao, goal, anchors) -> bool:
+    """Does the multi-gap corridor still solve the board? Simulates the pushes in order."""
+    cur, cur_blocks = dao, set(blocks)
+    for (gap, bd, ah) in anchors:
+        if ah in walls or ah in cur_blocks or gap not in cur_blocks:
+            return False
+        if not _bfs_reach(R, C, walls | cur_blocks, cur, bd):
+            return False
+        cur_blocks.discard(gap); cur_blocks.add(ah)      # push gap -> ah
+        cur = gap
+    return _bfs_reach(R, C, walls | cur_blocks, cur, goal)
+
+
+def _corridor_moves(R, C, walls, blocks, dao, goal, anchors):
+    """Dao move list for the corridor (walk -> push -> walk -> ... -> walk to goal), or None."""
+    cur, cur_blocks, moves = dao, set(blocks), []
+    for (gap, bd, ah) in anchors:
+        if ah in walls or ah in cur_blocks or gap not in cur_blocks:
+            return None
+        p = _bfs_path(R, C, walls | cur_blocks, cur, bd)
+        if p is None:
+            return None
+        moves += _moves_of(p)
+        moves.append(_CHAR[(gap[0] - bd[0], gap[1] - bd[1])])   # the push (bd -> gap)
+        cur_blocks.discard(gap); cur_blocks.add(ah)
+        cur = gap
+    p = _bfs_path(R, C, walls | cur_blocks, cur, goal)
+    if p is None:
         return None
-    gap = next(x for x in line if x in blocks)
-    gr, gc = gap
+    return moves + _moves_of(p)
+
+
+def _detect_gaps(R, C, walls, blocks, dao, goal, bazzi, P):
+    """The board's barrier GAPS (the single block on each anti-diagonal that is all walls except one
+    block), ordered low->high by r+c. The push axis is chosen later by _corridor_find."""
     occupied = {dao, goal} | ({bazzi} if P == 2 else set())
-    for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
-        if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
-            continue
-        if bd in walls or bd in blocks or ah in walls or ah in blocks:
-            continue
-        if ah in occupied or bd in occupied:    # the block can't be pushed onto a player/goal cell
-            continue
-        p1 = _bfs_path(R, C, walls | blocks, dao, bd)
-        if p1 is None:
-            continue
-        p2 = _bfs_path(R, C, walls | ((blocks - {gap}) | {ah}), gap, goal)
-        if p2 is None:
-            continue
-        dao_moves = _moves_of(p1) + [_CHAR[(gr - bd[0], gc - bd[1])]] + _moves_of(p2)
-        if P == 1:
-            return "".join(dao_moves)
-        # C=2: Bazzi (on the border) "passes" by moving outward; interleave one pass after each
-        # Dao move except the last (Dao reaching the goal on its turn ends the run).
-        bp = "U" if bazzi[0] == 0 else "D" if bazzi[0] == R - 1 else "L" if bazzi[1] == 0 else "R"
-        out = []
-        for i, m in enumerate(dao_moves):
-            out.append(m)
-            if i < len(dao_moves) - 1:
-                out.append(bp)
-        return "".join(out)
-    return None
+    gaps = []
+    for K in range(1, R + C - 2):
+        line = [(r, K - r) for r in range(max(0, K - (C - 1)), min(R, K + 1))]
+        nb = sum(x in blocks for x in line)
+        no = sum(x not in walls and x not in blocks and x not in occupied for x in line)
+        if nb == 1 and no == 0 and any(x in walls for x in line):
+            gaps.append(next(x for x in line if x in blocks))
+    return gaps
+
+
+def _corridor_find(R, C, walls, blocks, dao, goal, gaps):
+    """Choose a push axis for each gap (DFS, both axes, backtracking) so the full corridor connects:
+    Dao reaches behind gap_1, pushes it, reaches behind gap_2, ..., finally reaches the goal. Gaps
+    MUST be ordered low->high. Returns ordered anchors [(gap, behind, ahead)] or None."""
+    def rec(idx, cur, cur_blocks):
+        if idx == len(gaps):
+            return [] if _bfs_reach(R, C, walls | cur_blocks, cur, goal) else None
+        gap = gaps[idx]
+        if gap not in cur_blocks:
+            return None
+        gr, gc = gap
+        for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
+            if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
+                continue
+            if ah in walls or ah in cur_blocks:
+                continue
+            if not _bfs_reach(R, C, walls | cur_blocks, cur, bd):
+                continue
+            nb = set(cur_blocks); nb.discard(gap); nb.add(ah)
+            rest = rec(idx + 1, gap, nb)
+            if rest is not None:
+                return [(gap, bd, ah)] + rest
+        return None
+    return rec(0, dao, set(blocks))
+
+
+def corridor_witness(inst: Instance):
+    """A VALID (not necessarily optimal) solution for a board with the generator's barriers — walk
+    behind each gap, push it through, on to the next, finally to the goal. Solvability WITNESS +
+    Step-Up reference fallback when an exact solve is intractable. Move string or None."""
+    R, C, P, bazzi = inst.R, inst.C, inst.P, inst.bazzi
+    gaps = _detect_gaps(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, bazzi, P)
+    if not gaps:
+        return None
+    anchors = _corridor_find(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, gaps)
+    if not anchors:
+        return None
+    dao_moves = _corridor_moves(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, anchors)
+    if dao_moves is None:
+        return None
+    if P == 1:
+        return "".join(dao_moves)
+    bp = "U" if bazzi[0] == 0 else "D" if bazzi[0] == R - 1 else "L" if bazzi[1] == 0 else "R"
+    out = []
+    for i, m in enumerate(dao_moves):
+        out.append(m)
+        if i < len(dao_moves) - 1:
+            out.append(bp)
+    return "".join(out)
 
 
 def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
@@ -430,62 +483,64 @@ def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
             else:
                 target_set.discard(x)
 
+    def _gap_has_axis(gap, K):
+        """True if `gap` on line K has a push axis with both behind(K-1) and ahead(K+1) cells
+        in-bounds and not on a player/goal — a prerequisite for a usable chokepoint gap."""
+        gr, gc = gap
+        for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
+            if (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C
+                    and bd not in occupied and ah not in occupied):
+                return True
+        return False
+
     def cut():
-        """Force a push: wall off an anti-diagonal BARRIER between Dao's corner and the goal's,
-        leaving exactly ONE gap plugged by a single pushable BLOCK. Every route to the goal must
-        cross r+c == K, and that whole line is walls except the gap (a block) — so NO block-free
-        walk can exist on a board of ANY size (this is what makes even a 30x30 non-trivial). The
-        gap is biased toward an END of the barrier so Dao must detour along it (a longer optimal
-        path). Solvability is proven CONSTRUCTIVELY with cheap BFS (Dao walks to the cell behind
-        the gap, pushes the block one step ahead, then walks on to the goal) — a full Dijkstra is
-        unreliable on a big barriered board within the generation node cap. Returns the solution
-        anchors (gap, behind, ahead), or None if no workable barrier was found."""
-        K = (R + C - 2) // 2
-        if P == 2 and bazzi[0] + bazzi[1] == K:      # a player cell on the band = an open gap
-            K = K - 1 if K - 1 >= 1 else K + 1
-        band = [(r, c) for (r, c) in cells if r + c == K and (r, c) not in occupied]
-        if len(band) < 2:                            # too small to hold a barrier AND a gap
+        """Build SEVERAL anti-diagonal barriers (a wall line each, one pushable-block gap each), the
+        gaps OFFSET, so reaching the goal forces a push through EVERY barrier in turn + a zig-zag —
+        a single push never opens a path (the old single-barrier board's flaw). Places candidate
+        barriers, then PROVES the whole multi-gap corridor connects via _corridor_find (DFS over push
+        axes); re-picks gaps until it does. Returns ordered anchors or None (then no mutation)."""
+        n = max(1, min(R, C) // 5)                   # ~6 barriers on 30x30, scales with size
+        span = R + C - 2
+        Ks = []
+        for j in range(n):                           # evenly spaced interior anti-diagonals
+            K = max(1, min(span - 1, round((j + 1) * span / (n + 1))))
+            if P == 2 and bazzi[0] + bazzi[1] == K:  # a player cell on the line would be an open gap
+                K += 1
+            if (not Ks or K - Ks[-1] >= 2) and 1 <= K <= span - 1:   # keep barriers >= 2 apart
+                Ks.append(K)
+        if not Ks:
             return None
-        rng.shuffle(band)
-        band.sort(key=lambda x: -abs(x[0] - x[1]))   # try gaps at the band's ends first (longer detour)
-        for gap in band:
-            gr, gc = gap
-            wall_cells = [x for x in band if x != gap]
-            barrier = set(wall_cells)
-            for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
-                if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
+        for _ in range(12):                          # re-pick gaps until the corridor connects
+            local_walls: set = set()
+            gaps = []
+            for K in Ks:
+                full = [x for x in cells if x[0] + x[1] == K and x not in occupied]   # the barrier line
+                axisable = [x for x in full if _gap_has_axis(x, K)]                    # cells usable as a gap
+                if len(full) < 2 or not axisable:
                     continue
-                if bd in occupied or ah in occupied:
-                    continue
-                if not _bfs_reach(R, C, barrier | {gap}, dao, bd):     # Dao can reach behind the gap
-                    continue
-                if not _bfs_reach(R, C, barrier | {ah}, gap, goal):    # ...and on to the goal post-push
-                    continue
-                walls.update(wall_cells)
-                blocks.add(gap)
-                return gap, bd, ah
+                gap = rng.choice(axisable)           # random gap position -> offset/zig-zag, re-picked on retry
+                local_walls |= set(x for x in full if x != gap)
+                gaps.append(gap)
+            if not gaps:
+                continue
+            gaps.sort(key=lambda x: x[0] + x[1])     # low -> high for the ordered corridor
+            anchors = _corridor_find(R, C, local_walls, set(gaps), dao, goal, gaps)
+            if anchors:
+                walls.update(local_walls)
+                blocks.update(gaps)
+                return anchors
         return None
 
-    chokepoint = cut()                # build the forced-push barrier; keep its solution anchors
+    anchors = cut()                   # build the forced-push barriers; keep the corridor anchors
 
-    if chokepoint:
-        gap, bd, ah = chokepoint
-
-        def ok() -> bool:
-            # the barrier's own solution must survive each random placement: Dao reaches `bd`,
-            # pushes the gap block to `ah`, then reaches the goal — all block-free (cheap BFS).
-            blk = walls | blocks
-            if ah in blk:                                          # ahead must stay free for the push
-                return False
-            if not _bfs_reach(R, C, blk, dao, bd):                 # walk to behind (gap block in blk)
-                return False
-            after = (blocks - {gap}) | {ah}                        # board right after the push
-            return _bfs_reach(R, C, walls | after, gap, goal)
+    if anchors:
+        def ok() -> bool:             # every random placement must keep the multi-gap corridor solvable
+            return _corridor_ok(R, C, walls, blocks, dao, goal, anchors)
     else:
         ok = solvable                 # no barrier (tiny board): fall back to the Dijkstra oracle
 
     place(walls, max(0, W - len(walls)), ok)      # top up to the authored obstacle/block totals,
-    place(blocks, max(0, B - len(blocks)), ok)    # counting the barrier's walls/block toward them
+    place(blocks, max(0, B - len(blocks)), ok)    # counting the barriers' walls/blocks toward them
     board = _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
     # `requires_push` = Dao can't reach the goal through empty cells alone (a block is in the way)
     return board, not _reachable_without_push(R, C, walls, blocks, dao, goal), R * C
