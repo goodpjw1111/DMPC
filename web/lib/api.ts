@@ -121,7 +121,8 @@ export const setNickname = (nickname: string) => apiPost<{ nickname: string }>("
 // ---- contest / problem reads ----
 export const getContestDetail = (cid: string) => apiGet<ApiContestDetail>(`/api/contests/${cid}`);
 export const getProblem = (pid: string) => apiGet<ApiProblem>(`/api/problems/${pid}`);
-export type ProblemExample = { example_input: string | null; example_output: string | null };
+export type ProblemExampleItem = { label?: string; input: string; output: string | null };
+export type ProblemExample = { examples: ProblemExampleItem[] };
 export const getProblemExample = (pid: string) => apiGet<ProblemExample>(`/api/problems/${pid}/example`);
 // Step Up "만점 기준 비용" per mission: { seed(string): optimal cost | null }. Lazy + cached server-side.
 export type RefCosts = { ref_costs: Record<string, number | null> };

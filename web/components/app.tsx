@@ -27,6 +27,7 @@ import {
   getEvalHealth, retryEvals,
   type ApiContestDetail, type ApiProblem, type StandingRow, type MyEval, type ProblemTemplate,
   type StepupSubmission, type ChallengeSubmission, type Replay, type MyReplay, type Registration, type EvalHealth,
+  type ProblemExample,
 } from "@/lib/api";
 
 // ===== small bits =====
@@ -168,39 +169,44 @@ function LimitsBar({ p }: { p: ApiProblem | null }) {
 // output shown only when the problem provides a reference solution. Both downloadable.
 function ExampleIO({ pid }: { pid: string | null }) {
   // fetched lazily (and server-cached) so it never blocks the statement from rendering.
-  const [ex, setEx] = useState<{ example_input: string | null; example_output: string | null } | null>(null);
+  const [ex, setEx] = useState<ProblemExample | null>(null);
   useEffect(() => {
     if (!pid) { setEx(null); return; }
     let on = true;
     setEx(null);
-    getProblemExample(pid).then((d) => { if (on) setEx(d); }).catch(() => { if (on) setEx({ example_input: null, example_output: null }); });
+    getProblemExample(pid).then((d) => { if (on) setEx(d); }).catch(() => { if (on) setEx({ examples: [] }); });
     return () => { on = false; };
   }, [pid]);
   if (!ex) return <p className="muted" style={{ fontSize: 12, marginTop: 14 }}>예제 입출력 불러오는 중…</p>;
-  if (!ex.example_input) return null;
-  const inp = ex.example_input, outp = ex.example_output;
+  if (!ex.examples.length) return null;
   const trunc = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + "\n…(생략 — 다운로드로 전체 확인)" : s);
   const pre = { background: "#0f1117", border: "1px solid var(--line)", borderRadius: 8, padding: 10, fontSize: 12, overflow: "auto", maxHeight: 240, margin: 0, whiteSpace: "pre" } as const;
   return <div className="card" style={{ marginTop: 14 }}>
     <h3 style={{ margin: "0 0 8px" }}>예제 입출력</h3>
-    <div className="grid2">
-      <div>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
-          <span className="k muted" style={{ fontSize: 12 }}>입력 (예제)</span>
-          <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText("example_input.txt", inp)}>⬇ 입력 다운로드</button>
+    {ex.examples.map((e, i) => {
+      const outp = e.output;
+      return <div key={i} style={{ marginTop: i ? 16 : 0 }}>
+        {e.label && <div className="k" style={{ fontSize: 13, fontWeight: 700, margin: "0 0 6px" }}>{e.label}</div>}
+        <div className="grid2">
+          <div>
+            <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+              <span className="k muted" style={{ fontSize: 12 }}>입력</span>
+              <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText(`example_input_${i + 1}.txt`, e.input)}>⬇ 입력</button>
+            </div>
+            <pre style={pre}>{trunc(e.input)}</pre>
+          </div>
+          <div>
+            <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+              <span className="k muted" style={{ fontSize: 12 }}>출력 {outp ? <span className="muted">(참조 풀이 — 만점 동급)</span> : ""}</span>
+              {outp ? <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText(`example_output_${i + 1}.txt`, outp)}>⬇ 출력</button> : null}
+            </div>
+            {outp
+              ? <pre style={pre}>{trunc(outp)}</pre>
+              : <div className="muted" style={{ fontSize: 12, padding: 10, lineHeight: 1.6 }}>이 문제는 정답 출력이 하나로 정해지지 않습니다 — 위 입력에 대한 <b>유효한 결과</b>를 제출하면 됩니다.</div>}
+          </div>
         </div>
-        <pre style={pre}>{trunc(inp)}</pre>
-      </div>
-      <div>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
-          <span className="k muted" style={{ fontSize: 12 }}>출력 {outp ? <span className="muted">(참조 풀이 — 만점 동급)</span> : ""}</span>
-          {outp ? <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => downloadText("example_output.txt", outp)}>⬇ 출력 다운로드</button> : null}
-        </div>
-        {outp
-          ? <pre style={pre}>{trunc(outp)}</pre>
-          : <div className="muted" style={{ fontSize: 12, padding: 10, lineHeight: 1.6 }}>이 문제는 정답 출력이 하나로 정해지지 않습니다 — 위 입력에 대한 <b>유효한 결과</b>를 제출하면 됩니다.</div>}
-      </div>
-    </div>
+      </div>;
+    })}
   </div>;
 }
 function MissionSelect({ mission, setMission, missions }: { mission: number; setMission: (i: number) => void; missions: Mission[] }) {

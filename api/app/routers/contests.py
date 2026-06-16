@@ -259,8 +259,19 @@ async def problem_example(pid: str, user: CurrentUser = Depends(get_current_user
     if cached is None:
         mod = load_problem(p["problem_key"])
         meta = effective_meta(mod.META, _as_dict(p["scoring_config"]))
-        inp, out = _example_io(mod, meta, p["kind"])
-        cached = {"example_input": inp, "example_output": out}
+        # A problem may supply its own condition-satisfying examples (e.g. maze: one C=1 + one
+        # C=2 board at the real contest size). Fall back to the generic single example otherwise.
+        examples: list[dict] = []
+        if hasattr(mod, "example_inputs"):
+            try:
+                examples = [e for e in mod.example_inputs(meta, p["kind"]) if e and e.get("input")]
+            except Exception:                   # noqa: BLE001 — examples are non-critical
+                examples = []
+        if not examples:
+            inp, out = _example_io(mod, meta, p["kind"])
+            if inp:
+                examples = [{"label": "예시", "input": inp, "output": out}]
+        cached = {"examples": examples}
         if len(_EXAMPLE_CACHE) > 512:
             _EXAMPLE_CACHE.clear()
         _EXAMPLE_CACHE[pid] = cached

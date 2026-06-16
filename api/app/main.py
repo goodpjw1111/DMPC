@@ -58,4 +58,11 @@ app.include_router(registrations.router)
 async def healthz():
     # Public, unauthenticated liveness probe — do NOT leak the deployment env
     # (fingerprinting aid). Keep the body minimal.
+    # Best-effort DB touch so the keepalive ping (every ~10 min) keeps NEON's compute warm too,
+    # not just Render — otherwise the free Neon instance suspends and the first query after an
+    # idle period is slow ("오랜만에 접속하면 로딩이 오래"). Liveness still returns ok if it fails.
+    try:
+        await db.fetchrow("SELECT 1")
+    except Exception:  # noqa: BLE001 — never fail liveness on a transient DB hiccup
+        pass
     return {"ok": True}

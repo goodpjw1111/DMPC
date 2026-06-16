@@ -235,6 +235,28 @@ def sample_solution(input_text: str) -> str:
     return corridor_witness(inst) or ""
 
 
+def example_inputs(meta: dict, kind: str) -> list[dict]:
+    """Statement examples that SATISFY the stated conditions — one per player count (C=1 and C=2).
+    Challenge boards use the fixed contest size (N = M = 30); Step Up shows small illustrative
+    boards WITH an optimal output. Deterministic seeds keep the cached example stable. Returns
+    [{label, input, output|None}]. Used by GET /problems/{pid}/example (overrides the generic one)."""
+    if kind == "challenge":
+        specs = [
+            ("예시 1 — C = 1 (다오 혼자)", 9001, {"rows": 30, "cols": 30, "players": 1, "obstacles": 40, "blocks": 80}),
+            ("예시 2 — C = 2 (배찌 도우미)", 9002, {"rows": 30, "cols": 30, "players": 2, "obstacles": 40, "blocks": 80}),
+        ]
+        return [{"label": lbl, "input": generate(s, p), "output": None} for (lbl, s, p) in specs]
+    specs = [
+        ("예시 1 — C = 1 (다오 혼자)", 9011, {"rows": 5, "cols": 5, "players": 1, "obstacles": 2, "blocks": 3}),
+        ("예시 2 — C = 2 (배찌 도우미)", 9012, {"rows": 6, "cols": 6, "players": 2, "obstacles": 2, "blocks": 4}),
+    ]
+    res = []
+    for (lbl, s, p) in specs:
+        inp = generate(s, p)
+        res.append({"label": lbl, "input": inp, "output": sample_solution(inp)})
+    return res
+
+
 # --- generator: solvable-by-construction (add only if still solvable) -------
 
 def _merged(params: dict | None) -> dict:
