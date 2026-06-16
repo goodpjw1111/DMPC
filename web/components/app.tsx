@@ -1308,6 +1308,7 @@ const CH_STATE_KO: Record<string, string> = {
 };
 function ApiChHistory({ hist }: { hist: ChallengeSubmission[] | null }) {
   if (hist === null) return <ApiLoading label="제출 내역 불러오는 중…" />;
+  const ce = hist.find((h) => h.state === "compile_error" && h.compile_log);   // most recent CE with a log
   return <>
     <h2 style={{ margin: "4px 0 8px" }}>최종 제출 목록</h2>
     <p className="muted" style={{ margin: "0 0 8px", fontSize: 12 }}>가장 <b>최근 제출</b>이 다음 중간 평가에 사용됩니다. 점수(상대 등수)는 평가 때 산정돼요(그 전 0점).</p>
@@ -1319,6 +1320,10 @@ function ApiChHistory({ hist }: { hist: ChallengeSubmission[] | null }) {
         <td>{h.sample_score_sum != null ? <b>{fmt(h.sample_score_sum)}</b> : <span className="muted">—</span>}</td></tr>)
         : <tr><td colSpan={4} className="muted" style={{ padding: 16, textAlign: "center" }}>아직 제출이 없어요.</td></tr>}
     </tbody></table>
+    {ce && <div className="card" style={{ marginTop: 10, borderColor: "var(--bad)" }}>
+      <div className="bad" style={{ fontWeight: 700, fontSize: 12 }}>컴파일 오류 로그 (최근 제출)</div>
+      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11, margin: "6px 0 0", maxHeight: 260, overflow: "auto" }}>{ce.compile_log}</pre>
+    </div>}
   </>;
 }
 

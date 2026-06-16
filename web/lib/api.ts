@@ -96,7 +96,8 @@ export type StepupSubmission = {
 export type ChallengeSample = { seed: number; cost: number | null; valid?: boolean; verdict?: string; runtime_ms?: number };
 export type ChallengeSubmission = {
   id: string; language_id: string; state: string; code_bytes: number; data_bytes: number | null;
-  sample_score_sum: number | null; sample_results: ChallengeSample[] | null; created_at: string;
+  sample_score_sum: number | null; sample_results: ChallengeSample[] | null;
+  compile_log?: string | null; created_at: string;
 };
 export type StandingRow = { nickname: string; score: number; rank: number | null };
 export type MyEvalCase = {

@@ -202,7 +202,7 @@ async def challenge_submissions(pid: str, user: CurrentUser = Depends(get_curren
     # source_text / data_bin — a list view never ships the code or the uploaded blob.
     rows = await db.fetch(
         """SELECT id, language_id, state, code_bytes, data_bytes,
-                  sample_score_sum, sample_results, created_at
+                  sample_score_sum, sample_results, compile_log, created_at
            FROM submissions WHERE problem_id=$1 AND user_id=$2
            ORDER BY created_at DESC LIMIT 50""",
         pid, user.id,
@@ -213,4 +213,6 @@ async def challenge_submissions(pid: str, user: CurrentUser = Depends(get_curren
              "code_bytes": r["code_bytes"], "data_bytes": r["data_bytes"],
              "sample_score_sum": r["sample_score_sum"],
              "sample_results": _samples(r["sample_results"]),
+             # compiler stderr on compile_error, so the contestant sees WHY (not just "컴파일 오류").
+             "compile_log": (r["compile_log"][:4000] if r["compile_log"] else None),
              "created_at": r["created_at"].isoformat()} for r in rows]
