@@ -1460,29 +1460,33 @@ type StepCase = { seed: number; score: number; features: Record<string, number> 
 // One-click authoring preset for the maze_push (길찾기) problem so the admin doesn't hand-fill
 // the tables. Step Up = the 10 graded cases below (scores sum to 1,000,000). Challenge = 18
 // subtasks: players {1,2} × obstacle-bands × block-bands, all on the fixed 30×30 board.
-// All cases are >=10x10 so the generator lays >=2 offset barriers (no single-push solution) and
-// dense (blocks+obstacles), getting harder by size+density. Scores sum to 1,000,000.
+// Organic (reverse-pull) boards, sized so the EXACT solver finds a TIGHT full-marks reference:
+// C=1 stays solver-tractable up to 10x10, C=2 (helper state-space) only up to ~7x7 — so C=2 cases
+// are kept small. Each is dense + push-required by construction. Scores sum to 1,000,000.
 const MAZE_STEPUP_PRESET: StepCase[] = [
-  { seed: 101, score: 50000,  features: { rows: 10, cols: 10, players: 1, obstacles: 35,  blocks: 35 } },
-  { seed: 102, score: 50000,  features: { rows: 10, cols: 10, players: 2, obstacles: 35,  blocks: 35 } },
-  { seed: 103, score: 50000,  features: { rows: 12, cols: 12, players: 1, obstacles: 55,  blocks: 50 } },
-  { seed: 104, score: 50000,  features: { rows: 12, cols: 12, players: 2, obstacles: 55,  blocks: 50 } },
-  { seed: 105, score: 100000, features: { rows: 15, cols: 15, players: 1, obstacles: 100, blocks: 80 } },
-  { seed: 106, score: 100000, features: { rows: 15, cols: 15, players: 2, obstacles: 100, blocks: 80 } },
-  { seed: 107, score: 100000, features: { rows: 18, cols: 18, players: 1, obstacles: 150, blocks: 120 } },
-  { seed: 108, score: 100000, features: { rows: 18, cols: 18, players: 2, obstacles: 150, blocks: 120 } },
-  { seed: 109, score: 200000, features: { rows: 20, cols: 20, players: 1, obstacles: 200, blocks: 150 } },
-  { seed: 110, score: 200000, features: { rows: 20, cols: 20, players: 2, obstacles: 200, blocks: 150 } },
+  { seed: 101, score: 50000,  features: { rows: 6,  cols: 6,  players: 1, obstacles: 12, blocks: 8 } },
+  { seed: 102, score: 50000,  features: { rows: 6,  cols: 6,  players: 2, obstacles: 12, blocks: 8 } },
+  { seed: 103, score: 50000,  features: { rows: 8,  cols: 8,  players: 1, obstacles: 22, blocks: 14 } },
+  { seed: 104, score: 50000,  features: { rows: 7,  cols: 7,  players: 2, obstacles: 16, blocks: 10 } },
+  { seed: 105, score: 100000, features: { rows: 8,  cols: 8,  players: 1, obstacles: 22, blocks: 16 } },
+  { seed: 106, score: 100000, features: { rows: 7,  cols: 7,  players: 2, obstacles: 16, blocks: 10 } },
+  { seed: 107, score: 100000, features: { rows: 9,  cols: 9,  players: 1, obstacles: 28, blocks: 18 } },
+  { seed: 108, score: 100000, features: { rows: 6,  cols: 6,  players: 2, obstacles: 12, blocks: 8 } },
+  { seed: 109, score: 200000, features: { rows: 10, cols: 10, players: 1, obstacles: 38, blocks: 24 } },
+  { seed: 110, score: 200000, features: { rows: 7,  cols: 7,  players: 2, obstacles: 16, blocks: 10 } },
 ];
 type PresetSub = { name: string; features: Record<string, number[]>; seedLo: number; seedHi: number; budget: number };
 function mazeChallengePreset(): PresetSub[] {
-  // dense 30x30: the generator lays ~6 offset barriers + fills to these high obstacle/block counts
-  // (still solvable by construction). Within feature_schema maxima (W<=400, B<=300).
+  // dense organic 30x30 (reverse-pull cave). Density is auto (walls fill the whole non-corridor area
+  // until push-required), so `obstacles` is only a soft hint; the BLOCK bands are the real difficulty
+  // lever (more blocks = a harder push puzzle). Within feature_schema maxima (W<=400, B<=300).
   const Wbands = [[150, 220], [220, 300], [300, 380]];
-  const Bbands = [[150, 200], [200, 250], [250, 300]];
+  const Bbands = [[100, 140], [140, 180], [180, 210]];   // capped ~22% of area in the generator
   const subs: PresetSub[] = [];
+  let band = 0;
   for (const c of [1, 2]) for (const [wlo, whi] of Wbands) for (const [blo, bhi] of Bbands) {
-    subs.push({ name: `C=${c} · ${blo}≤B≤${bhi} · ${wlo}≤W≤${whi}`,
+    band += 1;
+    subs.push({ name: `C=${c} · ${blo}≤B≤${bhi} · 고밀도 #${band}`,   // density is auto; W is a soft hint
       features: { rows: [30, 30], cols: [30, 30], players: [c, c], obstacles: [wlo, whi], blocks: [blo, bhi] },
       seedLo: 0, seedHi: 0, budget: 0 });
   }

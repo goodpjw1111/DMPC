@@ -212,14 +212,10 @@ def reference_cost(input_text: str) -> float:
     inst = parse(input_text)
     res = _solve(inst, REF_NODE_CAP, deadline_s=SOLVE_DEADLINE_S)
     if res:
-        out = float(res[0])
+        out = float(res[0])                       # exact optimum (tractable Step-Up sizes)
     else:
-        w = corridor_witness(inst)
-        out = float(MISS_COST)
-        if w is not None:
-            cost, valid, _ = check(input_text, w)
-            if valid and cost < MISS_COST:
-                out = float(cost)
+        sol = _SOL_CACHE.get(input_text)          # generator's recorded witness (achievable bound)
+        out = float(sol[0]) if sol is not None else float(MISS_COST)
     if len(_REF_CACHE) > 1024:
         _REF_CACHE.clear()
     _REF_CACHE[input_text] = out
@@ -232,7 +228,8 @@ def sample_solution(input_text: str) -> str:
     res = _solve(inst, REF_NODE_CAP, deadline_s=SOLVE_DEADLINE_S)
     if res:
         return res[1]
-    return corridor_witness(inst) or ""
+    sol = _SOL_CACHE.get(input_text)              # generator's recorded witness
+    return sol[1] if sol is not None else ""
 
 
 def example_inputs(meta: dict, kind: str) -> list[dict]:
@@ -247,8 +244,8 @@ def example_inputs(meta: dict, kind: str) -> list[dict]:
         ]
         return [{"label": lbl, "input": generate(s, p), "output": None} for (lbl, s, p) in specs]
     specs = [
-        ("예시 1 — C = 1 (다오 혼자)", 9011, {"rows": 10, "cols": 10, "players": 1, "obstacles": 22, "blocks": 20}),
-        ("예시 2 — C = 2 (배찌 도우미)", 9012, {"rows": 10, "cols": 10, "players": 2, "obstacles": 22, "blocks": 20}),
+        ("예시 1 — C = 1 (다오 혼자)", 9011, {"rows": 8, "cols": 8, "players": 1, "obstacles": 22, "blocks": 14}),
+        ("예시 2 — C = 2 (배찌 도우미)", 9012, {"rows": 7, "cols": 7, "players": 2, "obstacles": 16, "blocks": 10}),
     ]
     res = []
     for (lbl, s, p) in specs:
@@ -274,9 +271,6 @@ def _pick(rng: random.Random, p: dict, key: str) -> int:
         lo, hi = int(v[0]), int(v[1])
         return rng.randint(min(lo, hi), max(lo, hi))
     return int(v)
-
-
-GEN_RETRIES = 6                   # re-roll a board up to this many times to get one needing a push
 
 
 def _bfs_reach(R, C, blocked: set, src, dst) -> bool:
@@ -333,233 +327,265 @@ def _moves_of(path) -> list:
     return [_CHAR[(b[0] - a[0], b[1] - a[1])] for a, b in zip(path, path[1:])]
 
 
-# --- multi-barrier corridor (the generator's guaranteed solution) -----------
-# The board carries SEVERAL anti-diagonal barriers (each a wall line with one pushable-block gap),
-# the gaps OFFSET so a solution must zig-zag and push through each in turn — NO single push opens a
-# path. These helpers verify/reconstruct that corridor (walk behind a gap, push it one step, walk
-# to the next gap, ...). `anchors` = the ordered list of (gap, behind, ahead).
+# --- organic generator: reverse-pull scramble ------------------------------
+# Start from the SOLVED state (Dao on the goal), seed blocks, then apply many random REVERSE moves
+# (reverse-walk = Dao steps to an empty cell; PULL = Dao steps AWAY from an adjacent block, dragging
+# it into Dao's old cell — its forward inverse is a single-block PUSH). The FORWARD solution is the
+# recorded inverse moves reversed. Route Dao home to (0,0) (reverse-walk BFS), then WALL every cell
+# the solution never touches -> a dense, natural-looking cave with one winding corridor (no machine-
+# made diagonal stripes), GUARANTEED solvable WITH a recorded witness, and made NON-trivial (no
+# zero-push path, no single push opens one). Density is a byproduct of walling off the footprint.
 
-def _corridor_ok(R, C, walls, blocks, dao, goal, anchors) -> bool:
-    """Does the multi-gap corridor still solve the board? Simulates the pushes in order."""
-    cur, cur_blocks = dao, set(blocks)
-    for (gap, bd, ah) in anchors:
-        if ah in walls or ah in cur_blocks or gap not in cur_blocks:
-            return False
-        if not _bfs_reach(R, C, walls | cur_blocks, cur, bd):
-            return False
-        cur_blocks.discard(gap); cur_blocks.add(ah)      # push gap -> ah
-        cur = gap
-    return _bfs_reach(R, C, walls | cur_blocks, cur, goal)
+_INV = {"U": "D", "D": "U", "L": "R", "R": "L"}
+_SOL_CACHE: dict[str, tuple[float, str]] = {}     # board -> (cost, solution): generate() records the
+                                                  # witness; reference_cost/sample_solution read it for
+                                                  # boards an exact solve can't crack (dense/large).
 
 
-def _corridor_moves(R, C, walls, blocks, dao, goal, anchors):
-    """Dao move list for the corridor (walk -> push -> walk -> ... -> walk to goal), or None."""
-    cur, cur_blocks, moves = dao, set(blocks), []
-    for (gap, bd, ah) in anchors:
-        if ah in walls or ah in cur_blocks or gap not in cur_blocks:
-            return None
-        p = _bfs_path(R, C, walls | cur_blocks, cur, bd)
-        if p is None:
-            return None
-        moves += _moves_of(p)
-        moves.append(_CHAR[(gap[0] - bd[0], gap[1] - bd[1])])   # the push (bd -> gap)
-        cur_blocks.discard(gap); cur_blocks.add(ah)
-        cur = gap
-    p = _bfs_path(R, C, walls | cur_blocks, cur, goal)
-    if p is None:
-        return None
-    return moves + _moves_of(p)
-
-
-def _detect_gaps(R, C, walls, blocks, dao, goal, bazzi, P):
-    """The board's barrier GAPS (the single block on each anti-diagonal that is all walls except one
-    block), ordered low->high by r+c. The push axis is chosen later by _corridor_find."""
-    occupied = {dao, goal} | ({bazzi} if P == 2 else set())
-    gaps = []
-    for K in range(1, R + C - 2):
-        line = [(r, K - r) for r in range(max(0, K - (C - 1)), min(R, K + 1))]
-        nb = sum(x in blocks for x in line)
-        no = sum(x not in walls and x not in blocks and x not in occupied for x in line)
-        if nb == 1 and no == 0 and any(x in walls for x in line):
-            gaps.append(next(x for x in line if x in blocks))
-    return gaps
-
-
-def _corridor_find(R, C, walls, blocks, dao, goal, gaps):
-    """Choose a push axis for each gap (DFS, both axes, backtracking) so the full corridor connects:
-    Dao reaches behind gap_1, pushes it, reaches behind gap_2, ..., finally reaches the goal. Gaps
-    MUST be ordered low->high. Returns ordered anchors [(gap, behind, ahead)] or None."""
-    def rec(idx, cur, cur_blocks):
-        if idx == len(gaps):
-            return [] if _bfs_reach(R, C, walls | cur_blocks, cur, goal) else None
-        gap = gaps[idx]
-        if gap not in cur_blocks:
-            return None
-        gr, gc = gap
-        for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
-            if not (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C):
-                continue
-            if ah in walls or ah in cur_blocks:
-                continue
-            if not _bfs_reach(R, C, walls | cur_blocks, cur, bd):
-                continue
-            nb = set(cur_blocks); nb.discard(gap); nb.add(ah)
-            rest = rec(idx + 1, gap, nb)
-            if rest is not None:
-                return [(gap, bd, ah)] + rest
-        return None
-    return rec(0, dao, set(blocks))
-
-
-def corridor_witness(inst: Instance):
-    """A VALID (not necessarily optimal) solution for a board with the generator's barriers — walk
-    behind each gap, push it through, on to the next, finally to the goal. Solvability WITNESS +
-    Step-Up reference fallback when an exact solve is intractable. Move string or None."""
-    R, C, P, bazzi = inst.R, inst.C, inst.P, inst.bazzi
-    gaps = _detect_gaps(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, bazzi, P)
-    if not gaps:
-        return None
-    anchors = _corridor_find(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, gaps)
-    if not anchors:
-        return None
-    dao_moves = _corridor_moves(R, C, inst.walls, inst.blocks, inst.dao, inst.goal, anchors)
-    if dao_moves is None:
-        return None
-    if P == 1:
-        return "".join(dao_moves)
+def _lift_p2(dao_sol: str, R: int, bazzi) -> str:
+    """Lift a Dao-only (P=1) solution to P=2: interleave a harmless Bazzi border "pass" (a move
+    outward off its border cell — fails at +1, never disturbs the board) after every Dao move but
+    the last (Dao reaching the goal on its turn ends the run)."""
     bp = "U" if bazzi[0] == 0 else "D" if bazzi[0] == R - 1 else "L" if bazzi[1] == 0 else "R"
     out = []
-    for i, m in enumerate(dao_moves):
+    for i, m in enumerate(dao_sol):
         out.append(m)
-        if i < len(dao_moves) - 1:
+        if i < len(dao_sol) - 1:
             out.append(bp)
     return "".join(out)
 
 
-def _generate_once(seed: int, params: dict | None = None) -> tuple[str, bool]:
+def _empty_reach(R, C, blocked: set, src) -> set:
+    seen = {src}
+    q = deque([src])
+    while q:
+        r, c = q.popleft()
+        for dr, dc in DIRS.values():
+            nxt = (r + dr, c + dc)
+            if 0 <= nxt[0] < R and 0 <= nxt[1] < C and nxt not in blocked and nxt not in seen:
+                seen.add(nxt); q.append(nxt)
+    return seen
+
+
+def _single_push_trivial(R, C, walls, blocks, dao, goal) -> bool:
+    """Does pushing ANY one block (one chain-shift) open a zero-push path dao -> goal? Only blocks
+    bordering Dao's empty-reachable region can matter, so test just those (cheap on dense boards)."""
+    reach = _empty_reach(R, C, walls | blocks, dao)
+    if goal in reach:
+        return True
+    frontier = {(r + dr, c + dc) for (r, c) in reach for dr, dc in DIRS.values()
+                if (r + dr, c + dc) in blocks}
+    for b in frontier:
+        for dr, dc in DIRS.values():
+            cr, cc = b
+            while (cr, cc) in blocks:                       # push the whole contiguous chain one cell
+                cr, cc = cr + dr, cc + dc
+            if not (0 <= cr < R and 0 <= cc < C) or (cr, cc) in walls:
+                continue
+            nb = set(blocks); nb.discard(b); nb.add((cr, cc))
+            if _bfs_reach(R, C, walls | nb, dao, goal):
+                return True
+    return False
+
+
+def _nontrivial(R, C, walls, blocks, dao, goal) -> bool:
+    return (not _reachable_without_push(R, C, walls, blocks, dao, goal)
+            and not _single_push_trivial(R, C, walls, blocks, dao, goal))
+
+
+def _reverse_pull_core(seed, params):
+    """One reverse-pull scramble. Returns (R, C, P, blocks, dao, bazzi, goal, dao_sol, used) or None,
+    where `used` = every cell the recorded P=1 solution touches (Dao path + all block positions)."""
     rng = random.Random(seed)
     p = _merged(params)
     R, C = max(3, _pick(rng, p, "rows")), max(3, _pick(rng, p, "cols"))
     P = 2 if _pick(rng, p, "players") >= 2 else 1
-    W, B = max(0, _pick(rng, p, "obstacles")), max(0, _pick(rng, p, "blocks"))
-
-    cells = [(r, c) for r in range(R) for c in range(C)]
-    rng.shuffle(cells)
-    # FIXED corners: Dao always starts top-left (0,0) and the goal is always bottom-right
-    # (N-1, M-1), so every instance is a full corner-to-corner traversal (much harder than a
-    # nearby start/goal). Only Bazzi's position is randomized.
-    dao, goal = (0, 0), (R - 1, C - 1)
+    B = max(0, _pick(rng, p, "blocks"))
+    W = max(0, _pick(rng, p, "obstacles"))         # wall budget (density target; raised if needed)
+    dao0, goal = (0, 0), (R - 1, C - 1)
     if P == 2:
-        # Bazzi at a RANDOM border cell (cells is shuffled) — a border cell can always "pass"
-        # (a move outward into the boundary fails harmlessly), so a Dao-alone (P=1) solution
-        # lifts to C=2 verbatim and the P=1 solvability oracle below remains a valid proof.
-        border = [(r, c) for (r, c) in cells if (r in (0, R - 1) or c in (0, C - 1)) and (r, c) not in (dao, goal)]
-        bazzi = border[0] if border else next((x for x in cells if x not in (dao, goal)), (0, 1))
+        border = [(r, c) for r in range(R) for c in range(C)
+                  if (r in (0, R - 1) or c in (0, C - 1)) and (r, c) not in (dao0, goal)]
+        rng.shuffle(border)
+        bazzi = border[0] if border else (0, 1)
     else:
         bazzi = (-1, -1)
-    occupied = {dao, goal} | ({bazzi} if P == 2 else set())
-    walls: set = set()
-    blocks: set = set()
 
-    def solvable() -> bool:
-        # Check with P=1 (Dao alone) even for C=2. Bazzi can always take a non-disruptive
-        # turn — move into a wall/edge to "pass", or step onto an empty cell (players are
-        # transparent; only Bazzi's block-pushes change the board) — so any board Dao can
-        # solve alone is also solvable with the helper. This keeps the (Dao,Bazzi,blocks)
-        # state space from exploding on large C=2 boards (which otherwise can't be verified).
-        inst = Instance(R, C, 1, walls, blocks, dao, bazzi, goal)
-        return _solve(inst, GEN_NODE_CAP) is not None
+    all_cells = [(r, c) for r in range(R) for c in range(C)]
+    # On big boards keep the top row + left column open so Dao can always reverse-walk home; on
+    # small/cramped boards just keep (0,0) and rely on pull-escape.
+    home = ({(0, c) for c in range(C)} | {(r, 0) for r in range(R)}) if R * C >= 200 else {dao0}
+    free = [x for x in all_cells if x not in (dao0, goal) and x != bazzi and x not in home]
+    rng.shuffle(free)
+    # cap blocks at ~22% of the area: more than that boxes Dao in during the reverse scramble (he
+    # can't move/pull) and the board falls back. Density still comes mostly from WALLS, not blocks.
+    blocks = set(free[:min(B, int(0.22 * R * C), len(free))])
 
-    def place(target_set: set, count: int, ok) -> None:
-        cand = [x for x in cells if x not in walls and x not in blocks and x not in occupied]
-        rng.shuffle(cand)
-        done, i = 0, 0
-        while done < count and i < len(cand):
-            x = cand[i]
-            i += 1
-            target_set.add(x)
-            if ok():                  # keep only placements that preserve solvability
-                done += 1
-            else:
-                target_set.discard(x)
+    dao = goal                                    # reverse sim starts in the SOLVED state
+    inv = []                                      # forward-inverse chars, in scramble order
+    visited = {dao}
+    used_blocks = set(blocks)                      # every cell any block ever occupies
 
-    def _gap_has_axis(gap, K):
-        """True if `gap` on line K has a push axis with both behind(K-1) and ahead(K+1) cells
-        in-bounds and not on a player/goal — a prerequisite for a usable chokepoint gap."""
-        gr, gc = gap
-        for bd, ah in (((gr - 1, gc), (gr + 1, gc)), ((gr, gc - 1), (gr, gc + 1))):
-            if (0 <= bd[0] < R and 0 <= bd[1] < C and 0 <= ah[0] < R and 0 <= ah[1] < C
-                    and bd not in occupied and ah not in occupied):
-                return True
-        return False
+    def inb(r, c):
+        return 0 <= r < R and 0 <= c < C
 
-    def cut():
-        """Build SEVERAL anti-diagonal barriers (a wall line each, one pushable-block gap each), the
-        gaps OFFSET, so reaching the goal forces a push through EVERY barrier in turn + a zig-zag —
-        a single push never opens a path (the old single-barrier board's flaw). Places candidate
-        barriers, then PROVES the whole multi-gap corridor connects via _corridor_find (DFS over push
-        axes); re-picks gaps until it does. Returns ordered anchors or None (then no mutation)."""
-        n = max(1, min(R, C) // 5)                   # ~6 barriers on 30x30, scales with size
-        span = R + C - 2
-        Ks = []
-        for j in range(n):                           # evenly spaced interior anti-diagonals
-            K = max(1, min(span - 1, round((j + 1) * span / (n + 1))))
-            if P == 2 and bazzi[0] + bazzi[1] == K:  # a player cell on the line would be an open gap
-                K += 1
-            if (not Ks or K - Ks[-1] >= 2) and 1 <= K <= span - 1:   # keep barriers >= 2 apart
-                Ks.append(K)
-        if not Ks:
-            return None
-        for _ in range(12):                          # re-pick gaps until the corridor connects
-            local_walls: set = set()
-            gaps = []
-            for K in Ks:
-                full = [x for x in cells if x[0] + x[1] == K and x not in occupied]   # the barrier line
-                axisable = [x for x in full if _gap_has_axis(x, K)]                    # cells usable as a gap
-                if len(full) < 2 or not axisable:
-                    continue
-                gap = rng.choice(axisable)           # random gap position -> offset/zig-zag, re-picked on retry
-                local_walls |= set(x for x in full if x != gap)
-                gaps.append(gap)
-            if not gaps:
+    def free_nbrs(pos, bset):
+        return sum(1 for dr, dc in DIRS.values()
+                   if inb(pos[0] + dr, pos[1] + dc) and (pos[0] + dr, pos[1] + dc) not in bset)
+
+    for _ in range(min(int(R * C * 1.2) + 30, 1200)):
+        r, c = dao
+        cand = []
+        for dch, (dr, dc) in DIRS.items():
+            if not inb(r + dr, c + dc) or (r + dr, c + dc) in blocks:
                 continue
-            gaps.sort(key=lambda x: x[0] + x[1])     # low -> high for the ordered corridor
-            anchors = _corridor_find(R, C, local_walls, set(gaps), dao, goal, gaps)
-            if anchors:
-                walls.update(local_walls)
-                blocks.update(gaps)
-                return anchors
+            cand.append(("walk", dch, None))
+            if inb(r - dr, c - dc) and (r - dr, c - dc) in blocks:    # pull source opposite the step
+                cand.append(("pull", dch, (r - dr, c - dc)))
+        if not cand:
+            break
+        pulls = [x for x in cand if x[0] == "pull"]
+        walks = [x for x in cand if x[0] == "walk"]
+        action = None
+        if pulls and rng.random() < 0.45:           # prefer pulls but never box Dao in
+            rng.shuffle(pulls)
+            for a in pulls:
+                _, dch, bpos = a
+                dr, dc = DIRS[dch]
+                nb = set(blocks); nb.discard(bpos); nb.add((r, c))
+                if free_nbrs((r + dr, c + dc), nb) >= 1:
+                    action = a
+                    break
+        if action is None:
+            action = rng.choice(walks) if walks else rng.choice(cand)
+        kind, dch, extra = action
+        dr, dc = DIRS[dch]
+        inv.append(_INV[dch])
+        if kind == "pull":
+            blocks.discard(extra); blocks.add((r, c))
+            used_blocks.add((r, c)); used_blocks.add(extra)
+        dao = (r + dr, c + dc)
+        visited.add(dao)
+
+    # route Dao home to (0,0) over empty cells; if boxed in, pull a neighbour to escape, then retry.
+    path = None
+    for _ in range(6):
+        path = _bfs_path(R, C, set(blocks), dao, dao0)
+        if path is not None:
+            break
+        r, c = dao
+        freed = False
+        for dch, (dr, dc) in DIRS.items():
+            if (inb(r - dr, c - dc) and (r - dr, c - dc) in blocks
+                    and inb(r + dr, c + dc) and (r + dr, c + dc) not in blocks):
+                inv.append(_INV[dch]); blocks.discard((r - dr, c - dc)); blocks.add((r, c))
+                used_blocks.add((r, c)); used_blocks.add((r - dr, c - dc))
+                dao = (r + dr, c + dc); visited.add(dao); freed = True
+                break
+        if not freed:
+            break
+    if path is None:
         return None
+    inv.extend(_INV[m] for m in _moves_of(path))
+    visited.update(path)
 
-    anchors = cut()                   # build the forced-push barriers; keep the corridor anchors
+    dao_sol = "".join(reversed(inv))              # forward solution = reverse of the inverse moves
+    used = visited | used_blocks | {dao0, goal} | ({bazzi} if P == 2 else set())
+    return R, C, P, W, blocks, dao0, bazzi, goal, dao_sol, used
 
-    if anchors:
-        def ok() -> bool:             # every random placement must keep the multi-gap corridor solvable
-            return _corridor_ok(R, C, walls, blocks, dao, goal, anchors)
-    else:
-        ok = solvable                 # no barrier (tiny board): fall back to the Dijkstra oracle
 
-    place(walls, max(0, W - len(walls)), ok)      # top up to the authored obstacle/block totals,
-    place(blocks, max(0, B - len(blocks)), ok)    # counting the barriers' walls/blocks toward them
-    board = _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
-    # `requires_push` = Dao can't reach the goal through empty cells alone (a block is in the way)
-    return board, not _reachable_without_push(R, C, walls, blocks, dao, goal), R * C
+def _wall_fill(R, C, blocks, dao, goal, used, max_walls):
+    """Wall cells OUTSIDE the solution footprint (`used`) — so the recorded solution stays valid.
+    Fills up to `max_walls` SCATTERED cells; if that isn't yet non-trivial, keeps walling (in chunks)
+    until it is or the off-footprint is exhausted. Returns (walls, is_nontrivial) — never None, so a
+    board that can't be sealed (rare tiny/sparse case) still ships as a valid solvable board."""
+    offprint = [(r, c) for r in range(R) for c in range(C)
+                if (r, c) not in used and (r, c) not in blocks]
+    # scatter the partial fill (small boards) so walls don't bias to the top rows (row-major order);
+    # deterministic so generate() stays reproducible. (Large boards wall ALL off-footprint anyway.)
+    random.Random((R * 73856093) ^ (C * 19349663) ^ (len(blocks) * 83492791)).shuffle(offprint)
+    walls = set(offprint[:min(max_walls, len(offprint))])
+    if _nontrivial(R, C, walls, blocks, dao, goal):
+        return walls, True
+    idx = len(walls)
+    chunk = max(4, len(offprint) // 8)
+    while idx < len(offprint):                    # keep walling off-footprint until non-trivial
+        walls |= set(offprint[idx:idx + chunk]); idx += chunk
+        if _nontrivial(R, C, walls, blocks, dao, goal):
+            return walls, True
+    return walls, _nontrivial(R, C, walls, blocks, dao, goal)
+
+
+def _fallback_board(seed, params):
+    """Last-resort guaranteed-solvable board (reverse-pull practically always succeeds first): a
+    single wall row with a one-cell gap holding a block, SOLVED with the exact solver (the board is
+    tiny enough to solve). Crash-proof — if the solve somehow fails it returns an empty walkable
+    board so generate() never raises."""
+    rng = random.Random(seed ^ 0xABCDEF)
+    p = _merged(params)
+    R, C = max(3, _pick(rng, p, "rows")), max(3, _pick(rng, p, "cols"))
+    P = 2 if _pick(rng, p, "players") >= 2 else 1
+    dao0, goal = (0, 0), (R - 1, C - 1)
+    bazzi = (-1, -1)
+    if P == 2:
+        bazzi = (0, C - 1) if (0, C - 1) not in (dao0, goal) else (R - 1, 0)
+    mid, gc = R // 2, C // 2
+    walls = {(mid, c) for c in range(C) if c != gc}
+    blocks = {(mid, gc)} if mid + 1 < R else set()       # Dao pushes the gap block to cross
+    inst = Instance(R, C, 1, walls, blocks, dao0, bazzi, goal)
+    res = _solve(inst, REF_NODE_CAP)
+    if not res:                                          # degenerate — ship an empty walkable board
+        walls, blocks = set(), set()
+        res = _solve(Instance(R, C, 1, walls, blocks, dao0, bazzi, goal), REF_NODE_CAP)
+    sol_p1 = res[1] if res else ""
+    board = _serialize(R, C, P, walls, blocks, dao0, bazzi, goal)
+    sol = sol_p1 if P == 1 else _lift_p2(sol_p1, R, bazzi)
+    return board, sol
 
 
 def generate(seed: int, params: dict | None = None) -> str:
-    """Generate a board, preferring one where reaching the goal REQUIRES pushing a block (a
-    goal reachable through empty cells alone is a weak test case) — re-roll up to GEN_RETRIES
-    times, else fall back to the first board. Every board is push-solvable by construction."""
-    first = None
-    for k in range(GEN_RETRIES):
-        board, requires_push, area = _generate_once(seed * 1009 + k, params)
-        if requires_push:
-            return board
-        if first is None:
-            first = board
-        if area > 256:            # large board: sealing the goal with the budget is usually
-            break                 # infeasible and each build is costly — take the first one
-    return first
+    """An organic, dense, push-required board via reverse-pull scramble (see _reverse_pull_core):
+    a natural-looking cave with one winding corridor — NO machine-made diagonal stripes. Solvable BY
+    CONSTRUCTION; the recorded witness is cached so reference_cost/sample_solution can use it when an
+    exact solve is intractable (dense/large boards). Re-rolls until the board is non-trivial. Tiny
+    boards take a moderate density cap (keeps them solver-tractable for a TIGHT Step-Up reference);
+    a deterministic fallback (practically never hit) guarantees this never raises."""
+    rows, cols = (params or {}).get("rows"), (params or {}).get("cols")
+    def _hi(v):
+        return v[1] if isinstance(v, (list, tuple)) else v
+    small = rows is not None and cols is not None and _hi(rows) * _hi(cols) <= 200
+
+    def _cache(board, cost, sol):
+        if len(_SOL_CACHE) > 1024:
+            _SOL_CACHE.clear()
+        _SOL_CACHE[board] = (float(cost), sol)
+        return board
+
+    backup = None                                  # a solvable board (even if it couldn't be sealed)
+    for relax in (False, True):                    # pass 2 drops the small-board density cap
+        for attempt in range(40):
+            res = _reverse_pull_core(seed * 7919 + attempt + (5000 if relax else 0), params)
+            if res is None:
+                continue
+            R, C, P, W, blocks, dao, bazzi, goal, dao_sol, used = res
+            # small boards: moderate cap (keeps them solver-tractable + a little open). Big boards:
+            # wall EVERY off-footprint cell (max density, no artificial open stripes).
+            cap = min(W, int(0.55 * R * C)) if (small and not relax) else R * C
+            walls, ntv = _wall_fill(R, C, blocks, dao, goal, used, cap)
+            board = _serialize(R, C, P, walls, blocks, dao, bazzi, goal)
+            sol = dao_sol if P == 1 else _lift_p2(dao_sol, R, bazzi)
+            cost, valid, _ = check(board, sol)
+            if not (valid and cost < MISS_COST):
+                continue
+            if ntv:
+                return _cache(board, cost, sol)    # non-trivial (push required) -> ship it
+            if backup is None:
+                backup = (board, cost, sol)        # solvable but not sealable (rare tiny/sparse board)
+    if backup is not None:
+        return _cache(*backup)
+    board, sol = _fallback_board(seed, params)     # last resort: reverse-pull never yielded a board
+    cost, _v, _m = check(board, sol)
+    return _cache(board, cost, sol)
 
 
 META = {

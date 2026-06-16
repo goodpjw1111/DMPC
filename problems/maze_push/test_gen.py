@@ -83,13 +83,13 @@ def test_c2_bazzi_starts_on_border():
 
 
 def test_c2_constructively_solvable():
-    # the generator's chokepoint corridor yields a VALID C=2 solution (Dao path + Bazzi passes)
-    # reaching the goal — the solvability witness (an exact Sokoban solve is intractable here).
+    # every C=2 board is solvable BY CONSTRUCTION (reverse-pull scramble) with a recorded witness
+    # that sample_solution returns (an exact Sokoban solve is intractable / not needed here).
     for seed in range(12):
         g = P.generate(seed, {"rows": 8, "cols": 8, "players": 2, "obstacles": 6, "blocks": 7})
-        w = P.corridor_witness(P.parse(g))
-        assert w, (seed, "no corridor witness")
-        cost, valid, _ = P.check(g, w)
+        sol = P.sample_solution(g)
+        assert sol, (seed, "no recorded solution")
+        cost, valid, _ = P.check(g, sol)
         assert valid and cost < P.MISS_COST, (seed, cost, valid)
 
 
@@ -152,29 +152,30 @@ def test_block_can_pass_through_goal():
 
 
 def test_raised_density_places_past_old_max():
-    # obstacle/block maxes were raised well past the old 60; a dense board places them in full.
+    # a dense board places obstacles/blocks well past the old max-60.
     g = P.generate(1, {"rows": 20, "cols": 20, "players": 1, "obstacles": 150, "blocks": 80})
     assert g.count("#") > 60 and g.count("O") > 60, (g.count("#"), g.count("O"))
     # an exact Sokoban solve is intractable at this density (that's why such boards belong in the
-    # Challenge, not Step Up). Solvability is guaranteed by construction — verified via the witness.
-    w = P.corridor_witness(P.parse(g))
-    assert w is not None
-    cost, valid, _ = P.check(g, w)
+    # Challenge, not Step Up). Solvable BY CONSTRUCTION — sample_solution returns the recorded witness.
+    sol = P.sample_solution(g)
+    assert sol
+    cost, valid, _ = P.check(g, sol)
     assert valid and cost < P.MISS_COST, (cost, valid)
 
 
-def test_cut_forces_push_all_sizes():
-    # the chokepoint barrier guarantees a push is required on boards of ANY size (incl. 30x30),
-    # and the corridor witness reaches the goal on every one of them.
+def test_organic_boards_nontrivial_all_sizes():
+    # every board (any size) is solvable by construction AND non-trivial: no empty-cell path to the
+    # goal, and no single push opens one. The recorded witness reaches the goal on every one.
     for (R, C, Pl, W, B) in [(7, 7, 1, 5, 8), (10, 10, 2, 10, 20), (20, 20, 1, 80, 80),
-                             (30, 30, 1, 100, 200), (30, 30, 2, 150, 250)]:
+                             (30, 30, 1, 250, 150), (30, 30, 2, 250, 150)]:
         for seed in range(3):
             g = P.generate(seed, {"rows": R, "cols": C, "players": Pl, "obstacles": W, "blocks": B})
             inst = P.parse(g)
             assert not P._reachable_without_push(inst.R, inst.C, inst.walls, inst.blocks, inst.dao, inst.goal), (R, C, seed)
-            w = P.corridor_witness(inst)
-            cost, valid, _ = P.check(g, w or "")
-            assert w and valid and cost < P.MISS_COST, (R, C, seed, cost, valid)
+            assert not P._single_push_trivial(inst.R, inst.C, inst.walls, inst.blocks, inst.dao, inst.goal), (R, C, seed)
+            sol = P.sample_solution(g)
+            cost, valid, _ = P.check(g, sol)
+            assert sol and valid and cost < P.MISS_COST, (R, C, seed, cost, valid)
 
 
 def test_stepup_reference_is_consistent():
